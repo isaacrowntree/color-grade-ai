@@ -136,33 +136,34 @@ end
 
 def generate_warm_skin_cast_fix(size, strength)
   # Fix "sunburnt red" skin from warm practical lights.
-  # Extremely surgical — uses hue + saturation + luminance windows to isolate
-  # ONLY skin tones, leaving light sources, deck, colored objects untouched.
+  # Uses hue + saturation + luminance windows to isolate skin tones,
+  # leaving light sources, deck, colored objects untouched.
   #
-  # Skin occupies a narrow band: H=5-30°, S=0.08-0.45, L=0.25-0.75
-  # Light sources: very high luminance or very high saturation (excluded)
-  # Dark surfaces: very low luminance (excluded)
-  # Saturated objects: S > 0.50 (excluded)
+  # Designed to work across two scenarios:
+  # - Well-lit stages: skin at S=0.15-0.45, L=0.25-0.75
+  # - Dark scenes with red practicals: skin at S=0.50-0.85, L=0.12-0.25
   #
-  # The fix: shift red skin hues toward peach (+15°) with gentle desat (15%).
+  # Practical lights (S>0.90) are excluded by the saturation ceiling.
+  #
+  # The fix: shift red skin hues toward peach (+8°) with adaptive desaturation
+  # (stronger desat for more saturated skin, gentle for normal skin).
 
-  hue_center   = 12.0    # target the red end of skin
-  hue_width    = 18.0    # ±18° covers 354°-30°
-  hue_soft     = 6.0
+  hue_center   = 10.0    # target red end of skin (balcony skin is 0-16°, stage is 20-35°)
+  hue_width    = 22.0    # ±22° covers 348°-32°
+  hue_soft     = 8.0
 
-  hue_shift    = 15.0    # push from red/flushed toward peach/natural
-  sat_reduce   = 0.85    # gentle 15% desaturation
+  hue_shift    = 8.0     # push from red/flushed toward peach
 
-  # Luminance window — skin brightness only
-  lum_low      = 0.22
+  # Luminance window — widened to catch dark underexposed skin
+  lum_low      = 0.10
   lum_high     = 0.78
-  lum_soft     = 0.08
+  lum_soft     = 0.10
 
-  # Saturation window — skin range only
-  # Skin: 0.08-0.45. Light sources/deck/colored objects: >0.50
+  # Saturation window — widened to catch heavily red-lit skin
+  # Normal skin: 0.08-0.45. Red-lit skin: 0.50-0.85. Practicals: >0.90 (excluded)
   sat_low      = 0.06
-  sat_high     = 0.48
-  sat_soft     = 0.06
+  sat_high     = 0.80
+  sat_soft     = 0.12
 
   generate_lut(size) do |r, g, b|
     h, s, l = rgb_to_hsl(r, g, b)
@@ -184,7 +185,7 @@ def generate_warm_skin_cast_fix(size, strength)
         lum_str = 1.0
       end
 
-      # Saturation window — exclude highly saturated (light sources, objects)
+      # Saturation window — exclude very highly saturated (light sources)
       # and very desaturated (near-neutral greys)
       if s < sat_low
         sat_str = 0.0
@@ -205,6 +206,10 @@ def generate_warm_skin_cast_fix(size, strength)
         new_h += 360.0 if new_h < 0
         new_h -= 360.0 if new_h >= 360.0
 
+        # Adaptive desaturation: stronger correction for more saturated skin
+        # Normal skin (S~0.25): 15% desat. Red-lit skin (S~0.70): 30% desat.
+        excess_sat = [s - 0.30, 0.0].max / 0.70
+        sat_reduce = 0.85 - 0.20 * excess_sat
         new_s = s * (1.0 - effective * (1.0 - sat_reduce))
 
         r, g, b = hsl_to_rgb(new_h, new_s, l)
