@@ -10,6 +10,7 @@
 # Types:
 #   yellow_fix         - Remove warm amber/yellow cast from stage lighting
 #   warm_skin_cast_fix - Fix red/orange cast on skin from warm practical lights
+#   night_warm_fix     - All-in-one: underexp lift + skin hue fix + black crush (no desat)
 #   overexposure_fix   - Scene-wide overexposure correction (~1 stop, all hues)
 #   underexposure_fix  - Scene-wide underexposure lift (~1.2 stops, shadow recovery)
 #   black_crush        - Crush milky/lifted blacks to true black
@@ -387,6 +388,108 @@ def generate_black_crush(size, strength)
   end
 end
 
+def generate_night_warm_fix(size, strength)
+  # All-in-one LUT for underexposed scenes with warm/red practical lights.
+  # Replaces the 4-LUT chain (underexp + yellow + skin + black crush) with
+  # a single pass. Designed to preserve vivid reds from practicals while
+  # correcting red skin toward natural tones.
+  #
+  # NO desaturation of warm tones — avoids the sepia/brown problem.
+  # Uses hue shift ONLY for skin correction.
+  #
+  # Components:
+  # 1. Underexposure lift (~1 stop via gamma)
+  # 2. Shadow floor lift
+  # 3. Skin hue shift (red → peach, hue only, no desat)
+  # 4. Highlight protection
+  # 5. Black crush (shadows below 12%)
+
+  # Exposure
+  gamma          = 1.0 - 0.28 * strength  # 0.72 at full = ~1 stop up
+  shadow_lift    = 0.02 * strength
+
+  # Highlight protection
+  highlight_knee = 0.82
+  highlight_cap  = 0.95
+
+  # Black crush
+  black_threshold = 0.10
+  crush_gamma     = 1.0 + 1.2 * strength  # 2.2 at full
+  crush_blend_end = 0.22
+
+  # Skin hue correction — shift only, NO desaturation
+  skin_hue_center = 10.0
+  skin_hue_width  = 22.0
+  skin_hue_soft   = 8.0
+  skin_hue_shift  = 8.0    # toward peach
+
+  # Skin windows (wide enough for dark red-lit skin)
+  skin_lum_low   = 0.08
+  skin_lum_high  = 0.78
+  skin_lum_soft  = 0.08
+  skin_sat_low   = 0.06
+  skin_sat_high  = 0.80
+  skin_sat_soft  = 0.10
+
+  generate_lut(size) do |r, g, b|
+    h, s, l = rgb_to_hsl(r, g, b)
+
+    # ── Step 1: Exposure lift ──
+    new_l = l + shadow_lift * (1.0 - l)
+    new_l = new_l ** gamma
+
+    # ── Step 2: Highlight protection ──
+    if new_l > highlight_knee
+      over = (new_l - highlight_knee) / (1.0 - highlight_knee)
+      new_l = highlight_knee + (highlight_cap - highlight_knee) * (2.0 * over - over * over)
+    end
+
+    # ── Step 3: Black crush ──
+    if new_l < crush_blend_end
+      crushed_l = new_l ** crush_gamma
+      if new_l < black_threshold
+        new_l = crushed_l
+      else
+        t = (new_l - black_threshold) / (crush_blend_end - black_threshold)
+        t = t * t * (3.0 - 2.0 * t)
+        new_l = crushed_l + (new_l - crushed_l) * t
+      end
+    end
+
+    # ── Step 4: Skin hue shift (no desaturation) ──
+    new_h = h
+    hue_str = hue_strength(h, skin_hue_center, skin_hue_width, skin_hue_soft)
+
+    if hue_str > 0 && s > 0.04
+      # Luminance window
+      lum_str = if l < skin_lum_low then 0.0
+        elsif l < skin_lum_low + skin_lum_soft then (l - skin_lum_low) / skin_lum_soft
+        elsif l > skin_lum_high then 0.0
+        elsif l > skin_lum_high - skin_lum_soft then (skin_lum_high - l) / skin_lum_soft
+        else 1.0
+        end
+
+      # Saturation window — exclude practicals (S > 0.90)
+      sat_str = if s < skin_sat_low then 0.0
+        elsif s < skin_sat_low + skin_sat_soft then (s - skin_sat_low) / skin_sat_soft
+        elsif s > skin_sat_high then 0.0
+        elsif s > skin_sat_high - skin_sat_soft then (skin_sat_high - s) / skin_sat_soft
+        else 1.0
+        end
+
+      effective = hue_str * lum_str * sat_str * strength
+      if effective > 0.01
+        new_h = h + skin_hue_shift * effective
+        new_h += 360.0 if new_h < 0
+        new_h -= 360.0 if new_h >= 360.0
+      end
+    end
+
+    r, g, b = hsl_to_rgb(new_h, s, new_l)
+    [r, g, b]
+  end
+end
+
 # ── LUT file writer ──────────────────────────────────────────────────
 
 def generate_lut(size, &transform)
@@ -522,8 +625,22 @@ if __FILE__ == $0
     ]
     table = generate_black_crush(size, strength)
 
+  when 'night_warm_fix'
+    puts "Generating night warm fix LUT..."
+    title = "Night Warm Fix - Underexposed + Red Practicals"
+    comments = [
+      "All-in-one fix for underexposed scenes with warm/red practical lights",
+      "Combines: ~1 stop lift + skin hue shift + black crush",
+      "No desaturation — preserves vivid reds from practicals",
+      "Use with AMIRA LUT only — replaces the multi-LUT chain",
+      "Apply AFTER LogC to Rec.709 conversion",
+      "Compatible with DaVinci Resolve and Adobe Premiere Pro",
+      "Strength: #{strength}"
+    ]
+    table = generate_night_warm_fix(size, strength)
+
   else
-    abort "Unknown LUT type: #{lut_type}\nAvailable: yellow_fix, warm_skin_cast_fix, overexposure_fix, underexposure_fix, black_crush, skin_highlight_fix"
+    abort "Unknown LUT type: #{lut_type}\nAvailable: yellow_fix, warm_skin_cast_fix, night_warm_fix, overexposure_fix, underexposure_fix, black_crush, skin_highlight_fix"
   end
 
   write_cube(output_path, table, size, title, comments)

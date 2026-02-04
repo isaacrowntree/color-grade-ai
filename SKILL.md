@@ -23,6 +23,7 @@ ruby analyze_frame.rb <image_path> <x1,y1,x2,y2> [label]
 
 | Type | What it fixes |
 |------|--------------|
+| `night_warm_fix` | **All-in-one** for underexposed scenes with warm/red practicals. ~1 stop lift + skin hue shift + black crush. No desaturation — preserves vivid reds. Use with just AMIRA. |
 | `yellow_fix` | Warm amber/yellow cast from stage lighting. H=10-60, 55% desat. |
 | `warm_skin_cast_fix` | Sunburnt/flushed red skin from warm practicals. Hue shift to peach, skin-only targeting. |
 | `overexposure_fix` | Scene-wide ~1 stop reduction with highlight rolloff. |
@@ -47,16 +48,18 @@ ruby analyze_frame.rb <image_path> <x1,y1,x2,y2> [label]
 
 LUTs can be stacked on separate adjustment layers / nodes. Common stacks:
 
+**Night scene with warm practicals (simplest):**
+1. Camera conversion LUT (e.g. AMIRA LogC to Rec.709)
+2. Night Warm Fix (single LUT handles everything)
+
 **Overexposed footage:**
-1. Camera conversion LUT (e.g. LogC to Rec.709)
-2. Yellow Cast Fix
-3. Overexposure Fix
-4. Black Crush
+1. Camera conversion LUT
+2. Overexposure Fix
+3. Black Crush
 
 **Underexposed footage:**
 1. Camera conversion LUT
-2. Yellow Cast Fix
-3. Underexposure Fix
+2. Underexposure Fix
 
 ## Node Order (DaVinci Resolve)
 
