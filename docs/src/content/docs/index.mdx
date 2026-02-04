@@ -1,0 +1,36 @@
+---
+title: color-grade-ai
+description: AI-powered .cube LUT generation for DaVinci Resolve and Premiere Pro
+template: splash
+hero:
+  tagline: Generate targeted .cube 3D LUTs for color correction using AI-assisted frame analysis.
+  actions:
+    - text: Get Started
+      link: /color-grade-ai/getting-started/
+      icon: right-arrow
+      variant: primary
+    - text: View on GitHub
+      link: https://github.com/isaacrowntree/color-grade-ai
+      icon: external
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+## What It Does
+
+Feed it a video frame. It identifies the color problem and generates a .cube LUT to fix it. The generated files work in any software that reads .cube LUTs.
+
+<CardGrid stagger>
+  <Card title="DaVinci Resolve" icon="seti:video">
+    Apply LUTs on nodes in the Color page. Stack corrections in a serial node chain following professional node order.
+  </Card>
+  <Card title="Adobe Premiere Pro" icon="seti:video">
+    Load LUTs via Lumetri Color on adjustment layers. Stack multiple corrections on separate layers.
+  </Card>
+  <Card title="Claude Code Skill" icon="rocket">
+    Install as a Claude Code skill and let AI analyze your footage and generate LUTs conversationally.
+  </Card>
+  <Card title="6 LUT Presets" icon="setting">
+    Yellow cast fix, red skin fix, overexposure, underexposure, black crush, and skin highlight rolloff. All with adjustable strength.
+  </Card>
+</CardGrid>

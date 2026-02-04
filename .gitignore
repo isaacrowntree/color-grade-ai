@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.astro/
+*.cube
+.DS_Store
+Thumbs.db
+.env
