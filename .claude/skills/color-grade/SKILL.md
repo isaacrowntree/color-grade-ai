@@ -107,7 +107,7 @@ To create a custom preset, add an entry to `presets.yml` with a pipeline of step
 
 Available LUT types:
 - **yellow_fix** — Targets H=10°-60° (warm amber/yellow), reduces saturation 55%, shifts hue toward neutral. For stage lighting spill.
-- **warm_skin_cast_fix** — Fixes sunburnt/flushed red skin from warm practical lights. Shifts red skin hues toward peach. Only targets skin luminance+saturation range — leaves light sources, deck, and saturated objects alone.
+- **red_skin_fix** — Fixes sunburnt/flushed red skin from warm practical lights. Shifts red skin hues toward peach. Only targets skin luminance+saturation range — leaves light sources, deck, and saturated objects alone.
 - **night_warm_fix** — All-in-one for underexposed warm/red practical scenes. ~1 stop lift + skin hue shift + black crush. No desaturation.
 - **night_purple_fix** — All-in-one for underexposed purple/magenta stage lighting. RGB channel rebalancing (boost G, reduce B) + ~2 stop lift + purple desaturation + skin hue shift from purple toward natural + black crush. Preserves atmospheric purple from stage lights while making skin look natural. Developed for SSMC 2025 salsa performances.
 - **overexposure_fix** — Scene-wide ~1 stop reduction with highlight rolloff from 55%. For blown-out footage.
@@ -181,7 +181,7 @@ When fixing a specific clip, follow this workflow to diagnose and build a correc
 
 4. **Identify the correction needed** based on the analysis:
    - Warm/amber cast → `yellow_fix`
-   - Red/flushed skin → `warm_skin_cast_fix`
+   - Red/flushed skin → `red_skin_fix`
    - Underexposed + warm → `night_warm_fix`
    - Purple/magenta cast → `night_purple_fix`
    - If no existing type fits, create a new one following the same pattern

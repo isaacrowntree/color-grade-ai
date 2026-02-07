@@ -40,7 +40,7 @@ end
 
 if presets
   expected_presets = %w[
-    yellow_fix warm_skin_cast_fix night_warm_fix night_purple_fix
+    yellow_fix red_skin_fix night_warm_fix night_purple_fix
     overexposure_fix underexposure_fix black_crush skin_highlight_fix
   ]
   expected_presets.each do |name|

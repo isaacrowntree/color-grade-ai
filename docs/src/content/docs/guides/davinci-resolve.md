@@ -54,8 +54,18 @@ Node 5: Underexposure_Fix_Plus_1.2stop
 ### Skin correction only
 ```
 Node 3: Camera → Rec.709 conversion LUT
-Node 4: Red_Skin_Fix (leaves everything else alone)
+Node 4: Red_Skin_Fix_H354-30_Skin_Only_Hue_to_Peach (leaves everything else alone)
 ```
+
+### Red blotchy skin / skin conditions
+```
+Node 3: Camera → Rec.709 conversion LUT
+Node 4: [Other corrections as needed]
+Node 5: Red_Skin_Fix_H354-30_Skin_Only_Hue_to_Peach (apply after other corrections)
+Node 6: Noise Reduction
+```
+
+The `red_skin_fix` targets H=354-30° and shifts red skin toward peach. It handles both warm-light casts and blotchy flushing/skin conditions. For more precise control, combine with a **Qualifier** — select the blotchy area with the eyedropper, then apply the LUT only to that selection. This completely avoids any spillover onto a darker-skinned dance partner.
 
 ## Noise Reduction
 

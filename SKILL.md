@@ -33,7 +33,7 @@ All LUT types are defined in `presets.yml`. Each preset is a pipeline of ordered
 | `night_warm_fix` | **All-in-one** for underexposed scenes with warm/red practicals. ~1 stop lift + skin hue shift + black crush. No desaturation — preserves vivid reds. Use with just AMIRA. |
 | `night_purple_fix` | **All-in-one** for underexposed scenes with purple/magenta stage lighting. RGB rebalancing + ~2 stop lift + purple desat + skin hue shift + black crush. Preserves atmospheric purple while fixing skin. |
 | `yellow_fix` | Warm amber/yellow cast from stage lighting. H=10-60, 55% desat. |
-| `warm_skin_cast_fix` | Sunburnt/flushed red skin from warm practicals. Hue shift to peach, skin-only targeting. |
+| `red_skin_fix` | Sunburnt/flushed red skin from warm practicals. Hue shift to peach, skin-only targeting. |
 | `overexposure_fix` | Scene-wide ~1 stop reduction with highlight rolloff. |
 | `underexposure_fix` | Scene-wide ~1.2 stop lift with shadow recovery. |
 | `black_crush` | Crushes milky/lifted blacks below 12% to true black. |

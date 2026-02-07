@@ -32,14 +32,24 @@ yellow_fix:
       min_sat: 0.02
       sat_scaling_ref: 0.5
 
-warm_skin_cast_fix:
-  title: "Warm Skin Cast Fix - Red/Orange Practical Light"
+red_skin_fix:
+  title: "Red Skin Fix - H354-30 Skin Only Hue to Peach"
   comments:
     - "Fixes red/orange cast on skin from warm practical lights"
-    - "Targets H=355-45 degrees (red through orange), 75% desaturation"
+    - "Targets H=354-30 degrees (red through orange), shifts to peach"
+    - "Also effective for red blotchy/flushed skin and skin conditions"
     - "Only affects warm saturated tones - cool tones untouched"
     - "Apply AFTER LogC to Rec.709 conversion"
     - "Compatible with DaVinci Resolve and Adobe Premiere Pro"
+  extra_examples:
+    - "# Reduced strength for less impact on darker-skinned partners"
+    - "ruby generate_lut.rb red_skin_fix output.cube --strength=0.7"
+  extra_docs: |
+    ### Also Use For: Red Blotchy Skin
+
+    This preset handles red skin redness and blotchy skin well — not just warm-light casts. It targets the same hue range (H=354-30°) that characterizes flushed skin, exercise-induced blotchiness, and skin conditions like rosacea. Apply it **after** your other correction LUTs.
+
+    When a fair-skinned and darker-skinned person share the frame, darker skin tones (H=17-20°) can overlap the blotchy range. Use `--strength=0.7` to reduce the impact on the partner, or in Resolve use a **Qualifier** to isolate just the blotchy area.
   pipeline:
     - step: skin_correction
       hue_center: 10.0

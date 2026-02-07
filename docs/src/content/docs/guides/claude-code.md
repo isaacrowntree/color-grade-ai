@@ -97,7 +97,7 @@ claude: Let me extract a frame and analyze the skin tones.
         range. Natural skin should be around H=25° (peach). I'll generate
         a targeted fix.
 
-        [runs generate_lut.rb warm_skin_cast_fix]
+        [runs generate_lut.rb red_skin_fix]
 
         Generated: /mnt/d/Videos/LUTs/Red_Skin_Fix.cube
 

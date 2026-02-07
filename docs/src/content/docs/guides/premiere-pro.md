@@ -53,7 +53,7 @@ V1: Clip + camera conversion LUT
 
 ### Skin correction (outdoor night shoot)
 ```
-V2: Red_Skin_Fix_Skin_Only_Hue_to_Peach.cube
+V2: Red_Skin_Fix_H354-30_Skin_Only_Hue_to_Peach.cube
 V1: Clip + camera conversion LUT
 ```
 
@@ -64,6 +64,16 @@ V1: Clip + AMIRA_Default_LogC2Rec709.cube (Input LUT)
 ```
 
 The `night_warm_fix` preset combines underexposure lift, skin hue correction, and black crush into a single LUT. No stacking needed.
+
+### Red blotchy skin / skin conditions
+```
+V4: Red_Skin_Fix_H354-30_Skin_Only_Hue_to_Peach.cube (apply after other corrections)
+V3: Yellow_Cast_Fix_H10-60_55pct_Desat.cube
+V2: Overexposure_Fix.cube (or whatever other corrections are needed)
+V1: Clip + camera conversion LUT
+```
+
+The `red_skin_fix` targets H=354-30° (red through orange skin) and shifts toward peach. It handles both warm-light casts and red blotchy skin/skin conditions. Apply it **after** other corrections. Use `--strength=0.7` if a darker-skinned partner in the frame is being over-corrected.
 
 ### Night scene with purple stage lighting
 ```

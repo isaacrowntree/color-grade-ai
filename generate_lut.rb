@@ -12,7 +12,7 @@
 #
 # Types (from presets.yml):
 #   yellow_fix         - Remove warm amber/yellow cast from stage lighting
-#   warm_skin_cast_fix - Fix red/orange cast on skin from warm practical lights
+#   red_skin_fix       - Fix red/flushed/blotchy skin, shifts hue to peach
 #   night_warm_fix     - All-in-one: underexp lift + skin hue fix + black crush (no desat)
 #   night_purple_fix   - All-in-one: purple cast removal + ~2 stop lift + skin fix + black crush
 #   overexposure_fix   - Scene-wide overexposure correction (~1 stop, all hues)

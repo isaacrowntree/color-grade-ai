@@ -64,6 +64,34 @@ Objects that overlap with skin in hue but differ in other dimensions:
 
 By using **three-way windowing** (hue AND saturation AND luminance), you can isolate skin from all of these in a 3D LUT.
 
+## Skin Redness and Blotchy Skin
+
+Fair-skinned subjects — especially during physical activity — show red blotchy patches on arms, chest, and face. Skin conditions (rosacea, keratosis pilaris, eczema) create even more extreme red patches.
+
+### Color Signature
+
+| Condition | HSV Hue | HSV Saturation | HSL Saturation |
+|-----------|---------|----------------|----------------|
+| Healthy fair skin | 25-40° | 5-20% | 0.03-0.15 |
+| Normal flushing (exercise) | 0-25° | 25-40% | 0.15-0.25 |
+| Skin condition patches | 348-5° | 60-90% | 0.45-0.75 |
+| Darker skin (natural) | 17-35° | 20-35% | 0.15-0.30 |
+
+The correction strategy is:
+1. **Shift hue first** — push from red (0°) toward peach/orange (25-30°) before any desaturation
+2. **Desaturate proportionally** — the more saturated the patch, the more it gets reduced
+3. **Luminance windowing** — exclude very bright skin (where darker skin tones tend to live in mixed-ethnicity scenes)
+
+### The Mixed-Ethnicity Challenge
+
+When a fair-skinned and darker-skinned person share the frame, their skin tones can overlap in hue space (both around H=15-20°). A 3D LUT processes each pixel independently and cannot spatially distinguish "her red blotch" from "his natural skin." This is a fundamental limitation of pixel-independent processing.
+
+Mitigation strategies:
+- **Luminance windowing** — darker skin at higher luminance can be excluded
+- **Saturation windowing** — skin condition patches (S>0.50) are far more saturated than any natural skin
+- **Reduced strength** — `--strength=0.7` trades correction intensity for less partner spillover
+- **Qualifier isolation** (Resolve) — use the Qualifier tool to select only the affected skin, then apply the LUT to that selection. This completely solves the problem but requires manual work per clip.
+
 ## LUT Limitations
 
 LUTs process each pixel **independently**. They have zero knowledge of neighboring pixels. This means they cannot:

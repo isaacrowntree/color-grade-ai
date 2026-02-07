@@ -93,8 +93,18 @@ File.open(File.join(DOCS_DIR, 'lut-types.md'), 'w') do |f|
 
     f.puts "```bash"
     f.puts "ruby generate_lut.rb #{name} output.cube"
+    if cfg['extra_examples']
+      f.puts ""
+      cfg['extra_examples'].each { |line| f.puts line }
+    end
     f.puts "```"
     f.puts ""
+
+    # Extra documentation (e.g. "Also Use For" sections)
+    if cfg['extra_docs']
+      f.puts cfg['extra_docs']
+      f.puts ""
+    end
 
     # Pipeline steps
     f.puts "### Pipeline"

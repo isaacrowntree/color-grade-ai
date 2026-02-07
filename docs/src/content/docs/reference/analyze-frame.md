@@ -60,7 +60,7 @@ Lum range: 0.043-0.882
 
 | Analysis Result | Likely Problem | Recommended LUT |
 |----------------|---------------|-----------------|
-| H=10-20°, S>0.3 on skin | Red/flushed skin | `warm_skin_cast_fix` |
+| H=10-20°, S>0.3 on skin | Red/flushed skin | `red_skin_fix` |
 | H=20-50°, S>0.25 on neutrals | Yellow/amber cast | `yellow_fix` |
 | V>0.8 on skin in log | Overexposed | `overexposure_fix` |
 | V<0.2 overall | Underexposed | `underexposure_fix` |

@@ -18,7 +18,7 @@ ruby analyze_frame.rb frame.png 1500,600,2000,900 skin
 # => H=12.3° S=0.38 V=0.45 — red/flushed skin from warm practical light
 
 # Generate a targeted fix
-ruby generate_lut.rb warm_skin_cast_fix skin_fix.cube
+ruby generate_lut.rb red_skin_fix skin_fix.cube
 # => 33x33x33 3D LUT targeting H=354-30°, skin luminance only
 ```
 
@@ -109,12 +109,12 @@ ruby generate_lut.rb yellow_fix yellow_fix_mild.cube --strength=0.5
 
 ### Apply in Your NLE
 
-**DaVinci Resolve:**
+**DaVinci Resolve:** ([full guide](https://isaacrowntree.github.io/color-grade-ai/guides/davinci-resolve/))
 1. Go to the Color page
 2. Add a serial node after your conversion LUT
 3. Right-click the node → LUT → browse to the .cube file
 
-**Adobe Premiere Pro:**
+**Adobe Premiere Pro:** ([full guide](https://isaacrowntree.github.io/color-grade-ai/guides/premiere-pro/))
 1. Add an adjustment layer above your clip
 2. Apply Lumetri Color effect
 3. Creative tab → Look dropdown → browse to the .cube file
@@ -124,13 +124,15 @@ ruby generate_lut.rb yellow_fix yellow_fix_mild.cube --strength=0.5
 | Type | Problem | What It Does |
 |------|---------|-------------|
 | `yellow_fix` | Yellow/amber cast from stage or practical lights | Desaturates H=10-60° by 55%, shifts hue toward neutral |
-| `warm_skin_cast_fix` | Sunburnt/flushed red skin | Shifts red skin hues toward peach. Three-way window (hue + sat + lum) targets only skin, leaves lights and objects alone |
+| `red_skin_fix` | Sunburnt/flushed red skin | Shifts red skin hues toward peach. Three-way window (hue + sat + lum) targets only skin, leaves lights and objects alone |
 | `overexposure_fix` | Blown highlights, washed out scene | ~1 stop global reduction + highlight rolloff from 55% + extra skin protection |
 | `underexposure_fix` | Too dark, lost shadow detail | ~1.2 stop lift + shadow recovery + highlight protection |
 | `black_crush` | Milky/lifted blacks | Crushes shadows below 12% luminance with smooth transition |
 | `skin_highlight_fix` | Minor skin overexposure | Subtle rolloff above 70% luminance, skin hues only |
+| `night_warm_fix` | Underexposed + warm/red practicals | All-in-one: ~1 stop lift + skin hue shift + black crush |
+| `night_purple_fix` | Underexposed + purple/magenta stage lighting | All-in-one: RGB rebalancing + ~2 stop lift + purple desat + skin fix + black crush |
 
-Every type supports `--strength=N` (0.0-1.0) and `--size=N` (LUT grid size, default 33).
+Every type supports `--strength=N` (0.0-1.0) and `--size=N` (LUT grid size, default 33). See the [full LUT reference](https://isaacrowntree.github.io/color-grade-ai/reference/lut-types/) for pipeline details and parameters.
 
 ## Stacking LUTs
 
@@ -156,6 +158,15 @@ LUTs stack on separate adjustment layers or nodes. Apply your camera conversion 
 1. Camera conversion LUT
 2. Warm Skin Cast Fix (leaves everything else alone)
 ```
+
+**Red blotchy skin / skin conditions:**
+```
+1. Camera conversion LUT
+2. [Any other corrections needed]
+3. Warm Skin Cast Fix (apply after other corrections)
+```
+
+> **Note on skin redness:** The `red_skin_fix` LUT handles red blotchy skin, flushing, and skin conditions by targeting H=354-30° and shifting toward peach. It works well as a final correction for both warm-light casts and red skin. See [Handling Skin Redness](#handling-skin-redness) for details.
 
 ## Frame Analysis
 
@@ -243,7 +254,42 @@ Claude will use the skill to analyze frames, identify problems, and generate the
 You can also invoke it directly:
 
 ```
-> /color-grade warm_skin_cast_fix output.cube
+> /color-grade red_skin_fix output.cube
+```
+
+## Handling Skin Redness
+
+Fair-skinned subjects (especially during physical activity like dancing) often show red blotchy skin on arms, chest, and face. This ranges from mild flushing to visible skin conditions.
+
+### The Problem
+
+| Skin State | HSV Hue | HSV Saturation |
+|------------|---------|----------------|
+| Healthy skin | 25-40° | 5-20% |
+| Mild flushing | 0-25° | 25-40% |
+| Skin condition patches | 348-5° | 60-90% |
+
+The challenge is that **darker-skinned partners** may have natural skin tones at H=17-20° — right in the middle of the blotchy range. A LUT processes pixels independently and can't distinguish "her red blotch" from "his natural skin tone" based on color alone.
+
+### The Solution
+
+Use `red_skin_fix` — it targets H=354-30° (red through orange skin tones) and shifts them toward peach using a 3-way window (hue + luminance + saturation). This handles both warm-light skin casts and red blotchy skin effectively.
+
+The hue shift happens **before** desaturation, so the remaining color is warm peach — not grey.
+
+### Usage Tips
+
+- **Apply after other corrections** in your LUT chain — it operates best on already-corrected Rec.709 colors.
+- **Use `--strength`** to dial it in. Start at 1.0; if the darker-skinned partner looks too affected, try 0.7.
+- **In Resolve**, you can combine this LUT with a Qualifier (eyedropper on the blotchy area) for even more precise isolation — this completely avoids any spillover onto the partner.
+- Expect a mild hue shift on darker skin tones in the H=15-20° range. This stays within natural warm skin territory (not green or yellow).
+
+```bash
+# Full strength
+ruby generate_lut.rb red_skin_fix skin_fix.cube
+
+# Dialed back for less impact on partner's skin
+ruby generate_lut.rb red_skin_fix skin_fix.cube --strength=0.7
 ```
 
 ## How It Works
