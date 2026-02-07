@@ -177,6 +177,58 @@ night_warm_fix:
       sat_soft: 0.10
       adaptive_desat: false
 
+pink_cast_fix:
+  title: "Pink Cast Fix - Magenta/Pink Stage Lighting"
+  comments:
+    - "Removes strong pink/magenta cast from stage lighting"
+    - "Designed for cine footage (Rec.709) — no LogC conversion needed"
+    - "RGB rebalancing + magenta desat + skin recovery + black crush"
+    - "Natural colors with party atmosphere and punchy shadows"
+    - "Compatible with DaVinci Resolve and Adobe Premiere Pro"
+  pipeline:
+    - step: rgb_rebalance
+      r_gain: 0.72
+      g_gain: 1.18
+      b_gain: 0.75
+      gain_ramp: 0.10
+    - step: hue_desat
+      hue_center: 310.0
+      hue_width: 45.0
+      softness: 15.0
+      sat_reduce: 0.35
+      hue_shift: 15.0
+      min_sat: 0.05
+    - step: skin_correction
+      hue_center: 330.0
+      hue_width: 40.0
+      hue_soft: 12.0
+      hue_shift: 35.0
+      lum_low: 0.05
+      lum_high: 0.80
+      lum_soft: 0.06
+      sat_low: 0.05
+      sat_high: 0.80
+      sat_soft: 0.10
+      adaptive_desat: false
+    - step: exposure
+      gamma: 0.92
+      shadow_lift: 0.005
+    - step: black_crush
+      black_threshold: 0.14
+      crush_gamma: 3.00
+      transition_end: 0.28
+    - step: shadow_sat_boost
+      boost: 0.25
+      range_low: 0.08
+      range_high: 0.40
+    - step: hue_desat
+      hue_center: 270.0
+      hue_width: 30.0
+      softness: 12.0
+      sat_reduce: 0.50
+      hue_shift: 0.0
+      min_sat: 0.08
+
 night_purple_fix:
   title: "Night Purple Fix - Underexposed + Purple/Magenta Stage Lighting"
   comments:
