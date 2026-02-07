@@ -2,15 +2,19 @@
 # generate_lut.rb - Generate 3D .cube LUT files for color correction
 #
 # Works with both DaVinci Resolve and Adobe Premiere Pro.
-# Apply AFTER a LogC→Rec.709 conversion LUT in your node/effect chain.
+# Apply AFTER a LogC->Rec.709 conversion LUT in your node/effect chain.
+#
+# Presets are defined in presets.yml. Each preset is a pipeline of ordered
+# steps. Adding a new LUT type means adding a YAML entry, not writing Ruby.
 #
 # Usage:
 #   ruby generate_lut.rb <type> <output_path> [options]
 #
-# Types:
+# Types (from presets.yml):
 #   yellow_fix         - Remove warm amber/yellow cast from stage lighting
 #   warm_skin_cast_fix - Fix red/orange cast on skin from warm practical lights
 #   night_warm_fix     - All-in-one: underexp lift + skin hue fix + black crush (no desat)
+#   night_purple_fix   - All-in-one: purple cast removal + ~2 stop lift + skin fix + black crush
 #   overexposure_fix   - Scene-wide overexposure correction (~1 stop, all hues)
 #   underexposure_fix  - Scene-wide underexposure lift (~1.2 stops, shadow recovery)
 #   black_crush        - Crush milky/lifted blacks to true black
@@ -27,6 +31,7 @@
 #   --size=N       LUT grid size (default: 33)
 
 require 'optparse'
+require 'yaml'
 
 LUT_DEFAULT_SIZE = 33
 
@@ -106,388 +111,332 @@ def clamp(v, lo = 0.0, hi = 1.0)
   [[v, lo].max, hi].min
 end
 
-# ── LUT presets ──────────────────────────────────────────────────────
+# Luminance window helper — returns 0.0-1.0 based on position in window
+def lum_window(l, low, high, soft)
+  if l < low
+    0.0
+  elsif l < low + soft
+    (l - low) / soft
+  elsif l > high
+    0.0
+  elsif l > high - soft
+    (high - l) / soft
+  else
+    1.0
+  end
+end
 
-def generate_yellow_fix(size, strength)
-  hue_center  = 35.0   # warm amber center
-  hue_width   = 25.0   # ±25° covers 10°-60°
-  softness    = 10.0
-  sat_reduce  = 0.45   # reduce sat to 45% of original in targeted range
-  hue_shift   = -5.0   # shift slightly away from yellow
+# Saturation window helper — returns 0.0-1.0 based on position in window
+def sat_window(s, low, high, soft)
+  if s < low
+    0.0
+  elsif s < low + soft
+    (s - low) / soft
+  elsif s > high
+    0.0
+  elsif s > high - soft
+    (high - s) / soft
+  else
+    1.0
+  end
+end
 
-  generate_lut(size) do |r, g, b|
-    h, s, l = rgb_to_hsl(r, g, b)
-    if s > 0.02
-      str = hue_strength(h, hue_center, hue_width, softness)
-      if str > 0
-        sat_factor = [s / 0.5, 1.0].min
+# ── Preset loader ────────────────────────────────────────────────────
+
+def load_presets(path = nil)
+  path ||= File.join(File.dirname(__FILE__), 'presets.yml')
+  YAML.load_file(path)
+end
+
+def load_preset(name, path = nil)
+  presets = load_presets(path)
+  preset = presets[name]
+  abort "Unknown preset: #{name}\nAvailable: #{presets.keys.join(', ')}" unless preset
+  preset
+end
+
+# ── Pipeline step handlers ───────────────────────────────────────────
+#
+# Each handler receives (r, g, b, state, step_config, strength) where
+# state = { h:, s:, l:, orig_l: }. Returns [r, g, b, state].
+#
+# state[:h], state[:s], state[:l] track the current HSL values.
+# state[:orig_l] holds the luminance from the last full HSL recomputation
+# (initial or after rgb_rebalance). Luminance-only steps (exposure,
+# highlight_protect, black_crush) update :l but NOT :orig_l.
+# Window-based steps (skin_correction, shadow_sat_boost) use :orig_l
+# for their luminance windows, matching the original monolithic functions.
+
+def step_rgb_rebalance(r, g, b, st, cfg, strength)
+  r_gain = 1.0 + (cfg['r_gain'] - 1.0) * strength
+  g_gain = 1.0 + (cfg['g_gain'] - 1.0) * strength
+  b_gain = 1.0 + (cfg['b_gain'] - 1.0) * strength
+  gain_ramp = cfg['gain_ramp']
+
+  lum = [r, g, b].max
+  gain_scale = [[lum / gain_ramp, 1.0].min, 0.0].max
+
+  r = clamp(r * (1.0 + (r_gain - 1.0) * gain_scale))
+  g = clamp(g * (1.0 + (g_gain - 1.0) * gain_scale))
+  b = clamp(b * (1.0 + (b_gain - 1.0) * gain_scale))
+
+  h, s, l = rgb_to_hsl(r, g, b)
+  [r, g, b, { h: h, s: s, l: l, orig_l: l }]
+end
+
+def step_exposure(r, g, b, st, cfg, strength)
+  h, s, l = st[:h], st[:s], st[:l]
+  gamma = 1.0 + (cfg['gamma'] - 1.0) * strength
+  shadow_lift = cfg['shadow_lift'] * strength
+
+  new_l = l + shadow_lift * (1.0 - l)
+  new_l = new_l ** gamma
+
+  r, g, b = hsl_to_rgb(h, s, new_l)
+  [r, g, b, st.merge(l: new_l)]
+end
+
+def step_highlight_protect(r, g, b, st, cfg, strength)
+  h, s, l = st[:h], st[:s], st[:l]
+  knee_start = cfg['knee_start']
+  knee_ceiling = cfg['knee_ceiling']
+
+  if l > knee_start
+    over = (l - knee_start) / (1.0 - knee_start)
+    new_l = knee_start + (knee_ceiling - knee_start) * (2.0 * over - over * over)
+    r, g, b = hsl_to_rgb(h, s, new_l)
+    [r, g, b, st.merge(l: new_l)]
+  else
+    [r, g, b, st]
+  end
+end
+
+def step_black_crush(r, g, b, st, cfg, strength)
+  h, s, l = st[:h], st[:s], st[:l]
+  black_threshold = cfg['black_threshold']
+  crush_gamma = 1.0 + (cfg['crush_gamma'] - 1.0) * strength
+  transition_end = cfg['transition_end']
+
+  if l < transition_end
+    crushed_l = l ** crush_gamma
+    if l < black_threshold
+      new_l = crushed_l
+    else
+      t = (l - black_threshold) / (transition_end - black_threshold)
+      t = t * t * (3.0 - 2.0 * t)
+      new_l = crushed_l + (l - crushed_l) * t
+    end
+    r, g, b = hsl_to_rgb(h, s, new_l)
+    [r, g, b, st.merge(l: new_l)]
+  else
+    [r, g, b, st]
+  end
+end
+
+def step_hue_desat(r, g, b, st, cfg, strength)
+  h, s, l = st[:h], st[:s], st[:l]
+  hue_center = cfg['hue_center']
+  hue_width = cfg['hue_width']
+  softness = cfg['softness']
+  sat_reduce = cfg['sat_reduce']
+  hue_shift_val = cfg['hue_shift'] || 0.0
+  min_sat = cfg['min_sat'] || 0.0
+  sat_scaling_ref = cfg['sat_scaling_ref']
+
+  if s > min_sat
+    str = hue_strength(h, hue_center, hue_width, softness)
+    if str > 0
+      if sat_scaling_ref
+        sat_factor = [s / sat_scaling_ref, 1.0].min
         effective = str * sat_factor * strength
+      else
+        effective = str * strength
+      end
 
+      new_s = s * (1.0 - effective * (1.0 - sat_reduce))
+      new_h = h + hue_shift_val * effective
+      new_h += 360.0 if new_h < 0
+      new_h -= 360.0 if new_h >= 360.0
+
+      r, g, b = hsl_to_rgb(new_h, new_s, l)
+      return [r, g, b, st.merge(h: new_h, s: new_s)]
+    end
+  end
+
+  [r, g, b, st]
+end
+
+def step_skin_correction(r, g, b, st, cfg, strength)
+  h, s, l = st[:h], st[:s], st[:l]
+  orig_l = st[:orig_l]
+
+  hue_center = cfg['hue_center']
+  hue_width = cfg['hue_width']
+  hue_soft = cfg['hue_soft']
+  hue_shift_val = cfg['hue_shift']
+
+  lum_low = cfg['lum_low']
+  lum_high = cfg['lum_high']
+  lum_soft = cfg['lum_soft']
+  sat_low = cfg['sat_low']
+  sat_high = cfg['sat_high']
+  sat_soft = cfg['sat_soft']
+
+  adaptive_desat = cfg['adaptive_desat']
+  min_sat = cfg['min_sat'] || 0.04
+
+  hue_str = hue_strength(h, hue_center, hue_width, hue_soft)
+
+  if hue_str > 0 && s > min_sat
+    # Use orig_l for luminance window (matches original monolithic code)
+    lum_str = lum_window(orig_l, lum_low, lum_high, lum_soft)
+    sat_str = sat_window(s, sat_low, sat_high, sat_soft)
+
+    effective = hue_str * lum_str * sat_str * strength
+
+    if effective > 0.01
+      new_h = h + hue_shift_val * effective
+      new_h += 360.0 if new_h < 0
+      new_h -= 360.0 if new_h >= 360.0
+
+      new_s = s
+      if adaptive_desat
+        desat_baseline = cfg['desat_baseline']
+        desat_range = cfg['desat_range']
+        desat_sat_ref = cfg['desat_sat_ref']
+        desat_sat_range = cfg['desat_sat_range']
+
+        excess_sat = [s - desat_sat_ref, 0.0].max / desat_sat_range
+        sat_reduce = desat_baseline - desat_range * excess_sat
         new_s = s * (1.0 - effective * (1.0 - sat_reduce))
-        new_h = h + hue_shift * effective
-        new_h += 360.0 if new_h < 0
-        new_h -= 360.0 if new_h >= 360.0
-
-        r, g, b = hsl_to_rgb(new_h, new_s, l)
       end
+
+      r, g, b = hsl_to_rgb(new_h, new_s, l)
+      return [r, g, b, st.merge(h: new_h, s: new_s)]
     end
-    [r, g, b]
+  end
+
+  [r, g, b, st]
+end
+
+def step_shadow_sat_boost(r, g, b, st, cfg, strength)
+  h, s, l = st[:h], st[:s], st[:l]
+  orig_l = st[:orig_l]
+  boost = cfg['boost']
+  range_low = cfg['range_low']
+  range_high = cfg['range_high']
+
+  # Use orig_l for range check (matches original code)
+  if orig_l > range_low && orig_l < range_high
+    shadow_boost = [(range_high - orig_l) / (range_high - range_low), 1.0].min
+    new_s = s * (1.0 + boost * shadow_boost * strength)
+    new_s = [new_s, 1.0].min
+    r, g, b = hsl_to_rgb(h, new_s, l)
+    [r, g, b, st.merge(s: new_s)]
+  else
+    [r, g, b, st]
   end
 end
 
-def generate_warm_skin_cast_fix(size, strength)
-  # Fix "sunburnt red" skin from warm practical lights.
-  # Uses hue + saturation + luminance windows to isolate skin tones,
-  # leaving light sources, deck, colored objects untouched.
-  #
-  # Designed to work across two scenarios:
-  # - Well-lit stages: skin at S=0.15-0.45, L=0.25-0.75
-  # - Dark scenes with red practicals: skin at S=0.50-0.85, L=0.12-0.25
-  #
-  # Practical lights (S>0.90) are excluded by the saturation ceiling.
-  #
-  # The fix: shift red skin hues toward peach (+8°) with adaptive desaturation
-  # (stronger desat for more saturated skin, gentle for normal skin).
+def step_skin_highlight(r, g, b, st, cfg, strength)
+  h, s, l = st[:h], st[:s], st[:l]
+  skin_hue_center = cfg['skin_hue_center']
+  skin_hue_width = cfg['skin_hue_width']
+  skin_softness = cfg['skin_softness']
+  knee_start = cfg['knee_start']
+  knee_ceiling = cfg['knee_ceiling']
+  global_knee = cfg['global_knee']
+  global_ceiling = cfg['global_ceiling']
+  hot_desat = cfg['hot_desat']
+  min_sat_ratio = cfg['min_sat_ratio']
 
-  hue_center   = 10.0    # target red end of skin (balcony skin is 0-16°, stage is 20-35°)
-  hue_width    = 22.0    # ±22° covers 348°-32°
-  hue_soft     = 8.0
+  skin_str = hue_strength(h, skin_hue_center, skin_hue_width, skin_softness)
+  effective_skin = skin_str * [s / min_sat_ratio, 1.0].min * strength
 
-  hue_shift    = 8.0     # push from red/flushed toward peach
+  if l > knee_start && effective_skin > 0.1
+    new_l = soft_knee_rolloff(l, knee_start, knee_ceiling)
+    blended_l = l + (new_l - l) * effective_skin
 
-  # Luminance window — widened to catch dark underexposed skin
-  lum_low      = 0.10
-  lum_high     = 0.78
-  lum_soft     = 0.10
+    hot_amount = [(l - knee_start) / (1.0 - knee_start), 1.0].min
+    desat_factor = 1.0 - (1.0 - hot_desat) * hot_amount * effective_skin
+    new_s = s * desat_factor
 
-  # Saturation window — widened to catch heavily red-lit skin
-  # Normal skin: 0.08-0.45. Red-lit skin: 0.50-0.85. Practicals: >0.90 (excluded)
-  sat_low      = 0.06
-  sat_high     = 0.80
-  sat_soft     = 0.12
-
-  generate_lut(size) do |r, g, b|
-    h, s, l = rgb_to_hsl(r, g, b)
-
-    # Hue targeting
-    hue_str = hue_strength(h, hue_center, hue_width, hue_soft)
-
-    if hue_str > 0
-      # Luminance window
-      if l < lum_low
-        lum_str = 0.0
-      elsif l < lum_low + lum_soft
-        lum_str = (l - lum_low) / lum_soft
-      elsif l > lum_high
-        lum_str = 0.0
-      elsif l > lum_high - lum_soft
-        lum_str = (lum_high - l) / lum_soft
-      else
-        lum_str = 1.0
-      end
-
-      # Saturation window — exclude very highly saturated (light sources)
-      # and very desaturated (near-neutral greys)
-      if s < sat_low
-        sat_str = 0.0
-      elsif s < sat_low + sat_soft
-        sat_str = (s - sat_low) / sat_soft
-      elsif s > sat_high
-        sat_str = 0.0
-      elsif s > sat_high - sat_soft
-        sat_str = (sat_high - s) / sat_soft
-      else
-        sat_str = 1.0
-      end
-
-      effective = hue_str * lum_str * sat_str * strength
-
-      if effective > 0.01
-        new_h = h + hue_shift * effective
-        new_h += 360.0 if new_h < 0
-        new_h -= 360.0 if new_h >= 360.0
-
-        # Adaptive desaturation: stronger correction for more saturated skin
-        # Normal skin (S~0.25): 15% desat. Red-lit skin (S~0.70): 30% desat.
-        excess_sat = [s - 0.30, 0.0].max / 0.70
-        sat_reduce = 0.85 - 0.20 * excess_sat
-        new_s = s * (1.0 - effective * (1.0 - sat_reduce))
-
-        r, g, b = hsl_to_rgb(new_h, new_s, l)
-      end
-    end
-
-    [r, g, b]
+    r, g, b = hsl_to_rgb(h, new_s, blended_l)
+    [r, g, b, st.merge(s: new_s, l: blended_l)]
+  elsif l > global_knee
+    new_l = soft_knee_rolloff(l, global_knee, global_ceiling)
+    blended_l = l + (new_l - l) * strength * (1.0 - effective_skin)
+    r, g, b = hsl_to_rgb(h, s, blended_l)
+    [r, g, b, st.merge(l: blended_l)]
+  else
+    [r, g, b, st]
   end
 end
 
-def generate_skin_highlight_fix(size, strength)
-  # Skin tone hue targeting
-  skin_hue_center = 25.0    # skin tones in Rec.709
-  skin_hue_width  = 25.0    # ±25° covers 0°-50° (peach through warm yellow)
-  skin_softness   = 12.0
+def step_skin_rolloff(r, g, b, st, cfg, strength)
+  # Skin-targeted luminance rolloff (used by overexposure_fix).
+  # Unlike skin_highlight, this uses a simple blend without threshold gating.
+  h, s, l = st[:h], st[:s], st[:l]
+  skin_hue_center = cfg['skin_hue_center']
+  skin_hue_width = cfg['skin_hue_width']
+  skin_softness = cfg['skin_softness']
+  knee_start = cfg['knee_start']
+  knee_ceiling = cfg['knee_ceiling']
+  min_sat = cfg['min_sat'] || 0.03
 
-  # Highlight rolloff parameters
-  knee_start     = 0.70     # start compressing above 70% luminance
-  knee_ceiling   = 0.92     # max output luminance for skin
-  global_knee    = 0.85     # gentle global rolloff for non-skin highlights
-  global_ceiling = 0.97
-
-  # Desaturate hot skin slightly
-  hot_desat = 0.7           # reduce saturation to 70% in blown highlights
-
-  generate_lut(size) do |r, g, b|
-    h, s, l = rgb_to_hsl(r, g, b)
-
-    # Determine skin hue strength
-    skin_str = hue_strength(h, skin_hue_center, skin_hue_width, skin_softness)
-    effective_skin = skin_str * [s / 0.15, 1.0].min * strength
-
-    if l > knee_start && effective_skin > 0.1
-      # Skin highlight rolloff — stronger compression
-      new_l = soft_knee_rolloff(l, knee_start, knee_ceiling)
-      blended_l = l + (new_l - l) * effective_skin
-
-      # Desaturate hot skin proportionally
-      hot_amount = [(l - knee_start) / (1.0 - knee_start), 1.0].min
-      desat_factor = 1.0 - (1.0 - hot_desat) * hot_amount * effective_skin
-      new_s = s * desat_factor
-
-      r, g, b = hsl_to_rgb(h, new_s, blended_l)
-    elsif l > global_knee
-      # Gentle global highlight rolloff for everything else
-      new_l = soft_knee_rolloff(l, global_knee, global_ceiling)
-      blended_l = l + (new_l - l) * strength * (1.0 - effective_skin)
-      r, g, b = hsl_to_rgb(h, s, blended_l)
-    end
-
-    [r, g, b]
-  end
-end
-
-def generate_overexposure_fix(size, strength)
-  # Scene-wide overexposure correction (~1-1.5 stops)
-  # Applies to ALL hues, not just skin.
-  #
-  # Three components:
-  # 1. Global exposure reduction via power curve (gamma up = darken)
-  # 2. Highlight compression with soft knee
-  # 3. Extra skin-tone highlight compression + desaturation
-
-  gamma         = 1.0 + 0.35 * strength  # 1.35 at full strength (~1 stop down)
-  knee_start    = 0.55                     # start highlight rolloff early
-  knee_ceiling  = 0.85                     # compress highlights hard
-  skin_ceiling  = 0.78                     # even harder for skin
-
-  skin_hue_center = 25.0
-  skin_hue_width  = 25.0
-  skin_softness   = 12.0
-
-  generate_lut(size) do |r, g, b|
-    h, s, l = rgb_to_hsl(r, g, b)
-
-    # Step 1: Global exposure reduction via power curve
-    new_l = l ** gamma
-
-    # Step 2: Highlight compression for ALL pixels
-    if new_l > knee_start
-      new_l = soft_knee_rolloff(new_l, knee_start, knee_ceiling)
-    end
-
-    # Step 3: Extra compression for skin tones
-    skin_str = s > 0.03 ? hue_strength(h, skin_hue_center, skin_hue_width, skin_softness) : 0.0
-    if skin_str > 0 && new_l > 0.50
-      skin_target = soft_knee_rolloff(new_l, 0.50, skin_ceiling)
-      new_l = new_l + (skin_target - new_l) * skin_str * [s / 0.1, 1.0].min
-    end
-
-    # Step 4: Desaturate blown highlights slightly
-    if new_l > 0.65
-      hot = [(new_l - 0.65) / 0.35, 1.0].min
-      s = s * (1.0 - hot * 0.25 * strength)
-    end
-
+  skin_str = s > min_sat ? hue_strength(h, skin_hue_center, skin_hue_width, skin_softness) : 0.0
+  if skin_str > 0 && l > knee_start
+    skin_target = soft_knee_rolloff(l, knee_start, knee_ceiling)
+    new_l = l + (skin_target - l) * skin_str * [s / 0.1, 1.0].min
     r, g, b = hsl_to_rgb(h, s, new_l)
-    [r, g, b]
+    [r, g, b, st.merge(l: new_l)]
+  else
+    [r, g, b, st]
   end
 end
 
-def generate_underexposure_fix(size, strength)
-  # Scene-wide underexposure correction (~1-1.5 stops lift)
-  # Inverse of overexposure_fix.
-  #
-  # Three components:
-  # 1. Global exposure lift via power curve (gamma < 1 = brighten)
-  # 2. Shadow lift to recover detail in dark areas
-  # 3. Gentle highlight protection so already-bright areas don't blow out
+def step_global_highlight_desat(r, g, b, st, cfg, strength)
+  h, s, l = st[:h], st[:s], st[:l]
+  threshold = cfg['threshold']
+  desat_amount = cfg['desat_amount']
 
-  gamma          = 1.0 - 0.30 * strength  # 0.70 at full strength (~1.2 stops up)
-  shadow_lift    = 0.03 * strength         # lift the absolute black floor slightly
-  highlight_knee = 0.80                    # start protecting highlights here
-  highlight_cap  = 0.95                    # don't let anything exceed 95%
-
-  generate_lut(size) do |r, g, b|
-    h, s, l = rgb_to_hsl(r, g, b)
-
-    # Step 1: Lift the black floor
-    new_l = l + shadow_lift * (1.0 - l)
-
-    # Step 2: Global exposure lift via power curve
-    new_l = new_l ** gamma
-
-    # Step 3: Protect highlights from blowing out
-    if new_l > highlight_knee
-      over = (new_l - highlight_knee) / (1.0 - highlight_knee)
-      compressed = highlight_knee + (highlight_cap - highlight_knee) * (2.0 * over - over * over)
-      new_l = compressed
-    end
-
-    # Slight saturation boost to counteract the washed-out look of lifted shadows
-    if l > 0.05 && l < 0.50
-      shadow_boost = [(0.50 - l) / 0.45, 1.0].min
-      s = s * (1.0 + 0.1 * shadow_boost * strength)
-      s = [s, 1.0].min
-    end
-
-    r, g, b = hsl_to_rgb(h, s, new_l)
-    [r, g, b]
+  if l > threshold
+    hot = [(l - threshold) / (1.0 - threshold), 1.0].min
+    new_s = s * (1.0 - hot * desat_amount * strength)
+    r, g, b = hsl_to_rgb(h, new_s, l)
+    [r, g, b, st.merge(s: new_s)]
+  else
+    [r, g, b, st]
   end
 end
 
-def generate_black_crush(size, strength)
-  # Crush milky/lifted blacks to true black.
-  # Steepens the shadow ramp so low values map closer to zero.
-  #
-  # - Below threshold: aggressive darkening
-  # - Smooth transition back to identity above threshold
-  # - Does not affect midtones or highlights at all
+# ── Pipeline runner ──────────────────────────────────────────────────
 
-  black_threshold = 0.12    # input values below this get crushed
-  crush_gamma     = 1.0 + 1.5 * strength  # 2.5 at full strength — steep shadow curve
-  transition_end  = 0.25    # fully blends back to identity by this point
+STEP_HANDLERS = {
+  'rgb_rebalance'        => method(:step_rgb_rebalance),
+  'exposure'             => method(:step_exposure),
+  'highlight_protect'    => method(:step_highlight_protect),
+  'black_crush'          => method(:step_black_crush),
+  'hue_desat'            => method(:step_hue_desat),
+  'skin_correction'      => method(:step_skin_correction),
+  'shadow_sat_boost'     => method(:step_shadow_sat_boost),
+  'skin_highlight'       => method(:step_skin_highlight),
+  'skin_rolloff'         => method(:step_skin_rolloff),
+  'global_highlight_desat' => method(:step_global_highlight_desat),
+}
 
-  generate_lut(size) do |r, g, b|
-    h, s, l = rgb_to_hsl(r, g, b)
+def apply_pipeline(r, g, b, pipeline, strength)
+  h, s, l = rgb_to_hsl(r, g, b)
+  state = { h: h, s: s, l: l, orig_l: l }
 
-    if l < transition_end
-      if l < black_threshold
-        # Hard crush: apply steep gamma to shadows
-        new_l = l ** crush_gamma
-      else
-        # Smooth blend from crushed back to identity
-        crushed = l ** crush_gamma
-        t = (l - black_threshold) / (transition_end - black_threshold)
-        # Smooth hermite interpolation
-        t = t * t * (3.0 - 2.0 * t)
-        new_l = crushed + (l - crushed) * t
-      end
-      r, g, b = hsl_to_rgb(h, s, new_l)
-    end
-
-    [r, g, b]
+  pipeline.each do |step_cfg|
+    step_type = step_cfg['step']
+    handler = STEP_HANDLERS[step_type]
+    abort "Unknown step type: #{step_type}" unless handler
+    r, g, b, state = handler.call(r, g, b, state, step_cfg, strength)
   end
-end
 
-def generate_night_warm_fix(size, strength)
-  # All-in-one LUT for underexposed scenes with warm/red practical lights.
-  # Replaces the 4-LUT chain (underexp + yellow + skin + black crush) with
-  # a single pass. Designed to preserve vivid reds from practicals while
-  # correcting red skin toward natural tones.
-  #
-  # NO desaturation of warm tones — avoids the sepia/brown problem.
-  # Uses hue shift ONLY for skin correction.
-  #
-  # Components:
-  # 1. Underexposure lift (~1 stop via gamma)
-  # 2. Shadow floor lift
-  # 3. Skin hue shift (red → peach, hue only, no desat)
-  # 4. Highlight protection
-  # 5. Black crush (shadows below 12%)
-
-  # Exposure
-  gamma          = 1.0 - 0.28 * strength  # 0.72 at full = ~1 stop up
-  shadow_lift    = 0.02 * strength
-
-  # Highlight protection
-  highlight_knee = 0.82
-  highlight_cap  = 0.95
-
-  # Black crush
-  black_threshold = 0.10
-  crush_gamma     = 1.0 + 1.2 * strength  # 2.2 at full
-  crush_blend_end = 0.22
-
-  # Skin hue correction — shift only, NO desaturation
-  skin_hue_center = 10.0
-  skin_hue_width  = 22.0
-  skin_hue_soft   = 8.0
-  skin_hue_shift  = 8.0    # toward peach
-
-  # Skin windows (wide enough for dark red-lit skin)
-  skin_lum_low   = 0.08
-  skin_lum_high  = 0.78
-  skin_lum_soft  = 0.08
-  skin_sat_low   = 0.06
-  skin_sat_high  = 0.80
-  skin_sat_soft  = 0.10
-
-  generate_lut(size) do |r, g, b|
-    h, s, l = rgb_to_hsl(r, g, b)
-
-    # ── Step 1: Exposure lift ──
-    new_l = l + shadow_lift * (1.0 - l)
-    new_l = new_l ** gamma
-
-    # ── Step 2: Highlight protection ──
-    if new_l > highlight_knee
-      over = (new_l - highlight_knee) / (1.0 - highlight_knee)
-      new_l = highlight_knee + (highlight_cap - highlight_knee) * (2.0 * over - over * over)
-    end
-
-    # ── Step 3: Black crush ──
-    if new_l < crush_blend_end
-      crushed_l = new_l ** crush_gamma
-      if new_l < black_threshold
-        new_l = crushed_l
-      else
-        t = (new_l - black_threshold) / (crush_blend_end - black_threshold)
-        t = t * t * (3.0 - 2.0 * t)
-        new_l = crushed_l + (new_l - crushed_l) * t
-      end
-    end
-
-    # ── Step 4: Skin hue shift (no desaturation) ──
-    new_h = h
-    hue_str = hue_strength(h, skin_hue_center, skin_hue_width, skin_hue_soft)
-
-    if hue_str > 0 && s > 0.04
-      # Luminance window
-      lum_str = if l < skin_lum_low then 0.0
-        elsif l < skin_lum_low + skin_lum_soft then (l - skin_lum_low) / skin_lum_soft
-        elsif l > skin_lum_high then 0.0
-        elsif l > skin_lum_high - skin_lum_soft then (skin_lum_high - l) / skin_lum_soft
-        else 1.0
-        end
-
-      # Saturation window — exclude practicals (S > 0.90)
-      sat_str = if s < skin_sat_low then 0.0
-        elsif s < skin_sat_low + skin_sat_soft then (s - skin_sat_low) / skin_sat_soft
-        elsif s > skin_sat_high then 0.0
-        elsif s > skin_sat_high - skin_sat_soft then (skin_sat_high - s) / skin_sat_soft
-        else 1.0
-        end
-
-      effective = hue_str * lum_str * sat_str * strength
-      if effective > 0.01
-        new_h = h + skin_hue_shift * effective
-        new_h += 360.0 if new_h < 0
-        new_h -= 360.0 if new_h >= 360.0
-      end
-    end
-
-    r, g, b = hsl_to_rgb(new_h, s, new_l)
-    [r, g, b]
-  end
+  [r, g, b]
 end
 
 # ── LUT file writer ──────────────────────────────────────────────────
@@ -524,20 +473,21 @@ end
 # ── CLI ──────────────────────────────────────────────────────────────
 
 if __FILE__ == $0
-  lut_type = ARGV.shift || abort(<<~USAGE)
-    Usage: ruby generate_lut.rb <type> <output_path> [--strength=N] [--size=N]
+  lut_type = ARGV.shift
+  presets = load_presets
 
-    Types:
-      yellow_fix           Remove warm amber/yellow cast from stage lighting
-      skin_highlight_fix   Roll off overexposed skin highlights (subtle, skin-only)
-      overexposure_fix     Scene-wide overexposure correction (~1 stop, all hues)
-      underexposure_fix    Scene-wide underexposure lift (~1.2 stops, shadow recovery)
-      black_crush          Crush milky/lifted blacks to true black
+  unless lut_type
+    abort <<~USAGE
+      Usage: ruby generate_lut.rb <type> <output_path> [--strength=N] [--size=N]
 
-    Options:
-      --strength=N   Overall strength 0.0-1.0 (default: 1.0)
-      --size=N       LUT grid size (default: 33)
-  USAGE
+      Types:
+      #{presets.map { |name, cfg| "  %-22s %s" % [name, cfg['title']] }.join("\n")}
+
+      Options:
+        --strength=N   Overall strength 0.0-1.0 (default: 1.0)
+        --size=N       LUT grid size (default: 33)
+    USAGE
+  end
 
   output_path = ARGV.shift || abort("Specify output path")
   strength = 1.0
@@ -551,96 +501,15 @@ if __FILE__ == $0
     end
   end
 
-  case lut_type
-  when 'yellow_fix'
-    puts "Generating yellow cast fix LUT..."
-    title = "Yellow Cast Fix - Stage Lighting"
-    comments = [
-      "Yellow/Amber Cast Fix LUT",
-      "Targets warm stage lighting cast (H=10-60 degrees)",
-      "Apply AFTER LogC to Rec.709 conversion",
-      "Compatible with DaVinci Resolve and Adobe Premiere Pro",
-      "Strength: #{strength}"
-    ]
-    table = generate_yellow_fix(size, strength)
+  preset = load_preset(lut_type)
+  title = preset['title']
+  comments = (preset['comments'] || []) + ["Strength: #{strength}"]
+  pipeline = preset['pipeline']
 
-  when 'warm_skin_cast_fix'
-    puts "Generating warm skin cast fix LUT..."
-    title = "Warm Skin Cast Fix - Red/Orange Practical Light"
-    comments = [
-      "Fixes red/orange cast on skin from warm practical lights",
-      "Targets H=355-45 degrees (red through orange), 75% desaturation",
-      "Only affects warm saturated tones - cool tones untouched",
-      "Apply AFTER LogC to Rec.709 conversion",
-      "Compatible with DaVinci Resolve and Adobe Premiere Pro",
-      "Strength: #{strength}"
-    ]
-    table = generate_warm_skin_cast_fix(size, strength)
+  puts "Generating #{lut_type} LUT..."
 
-  when 'skin_highlight_fix'
-    puts "Generating skin highlight fix LUT..."
-    title = "Skin Highlight Fix - Overexposure Recovery"
-    comments = [
-      "Skin Highlight Rolloff LUT",
-      "Compresses overexposed skin tones with soft knee",
-      "Apply AFTER LogC to Rec.709 conversion",
-      "Compatible with DaVinci Resolve and Adobe Premiere Pro",
-      "Strength: #{strength}"
-    ]
-    table = generate_skin_highlight_fix(size, strength)
-
-  when 'overexposure_fix'
-    puts "Generating scene overexposure fix LUT..."
-    title = "Scene Overexposure Fix"
-    comments = [
-      "Scene-wide overexposure correction (~1 stop reduction)",
-      "Global gamma + highlight rolloff + skin protection",
-      "Apply AFTER LogC to Rec.709 conversion",
-      "Compatible with DaVinci Resolve and Adobe Premiere Pro",
-      "Strength: #{strength}"
-    ]
-    table = generate_overexposure_fix(size, strength)
-
-  when 'underexposure_fix'
-    puts "Generating underexposure fix LUT..."
-    title = "Scene Underexposure Fix"
-    comments = [
-      "Scene-wide underexposure lift (~1.2 stops)",
-      "Global gamma lift + shadow recovery + highlight protection",
-      "Apply AFTER LogC to Rec.709 conversion",
-      "Compatible with DaVinci Resolve and Adobe Premiere Pro",
-      "Strength: #{strength}"
-    ]
-    table = generate_underexposure_fix(size, strength)
-
-  when 'black_crush'
-    puts "Generating black crush LUT..."
-    title = "Black Crush - Shadow Floor"
-    comments = [
-      "Crushes milky/lifted blacks to true black",
-      "Only affects shadows below 25% luminance",
-      "Apply AFTER LogC to Rec.709 conversion",
-      "Compatible with DaVinci Resolve and Adobe Premiere Pro",
-      "Strength: #{strength}"
-    ]
-    table = generate_black_crush(size, strength)
-
-  when 'night_warm_fix'
-    puts "Generating night warm fix LUT..."
-    title = "Night Warm Fix - Underexposed + Red Practicals"
-    comments = [
-      "All-in-one fix for underexposed scenes with warm/red practical lights",
-      "Combines: ~1 stop lift + skin hue shift + black crush",
-      "No desaturation — preserves vivid reds from practicals",
-      "Use with AMIRA LUT only — replaces the multi-LUT chain",
-      "Apply AFTER LogC to Rec.709 conversion",
-      "Compatible with DaVinci Resolve and Adobe Premiere Pro",
-      "Strength: #{strength}"
-    ]
-    table = generate_night_warm_fix(size, strength)
-
-  else
-    abort "Unknown LUT type: #{lut_type}\nAvailable: yellow_fix, warm_skin_cast_fix, night_warm_fix, overexposure_fix, underexposure_fix, black_crush, skin_highlight_fix"
+  table = generate_lut(size) do |r, g, b|
+    apply_pipeline(r, g, b, pipeline, strength)
   end
 
   write_cube(output_path, table, size, title, comments)

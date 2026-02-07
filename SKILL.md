@@ -12,18 +12,26 @@ Generate targeted .cube 3D LUTs for color correction. Works with DaVinci Resolve
 ## Quick Start
 
 ```bash
-# Generate a LUT
+# Generate a LUT (presets defined in presets.yml)
 ruby generate_lut.rb <type> <output_path> [--strength=0.0-1.0]
 
 # Analyze a frame for color stats
 ruby analyze_frame.rb <image_path> <x1,y1,x2,y2> [label]
+
+# Regenerate docs from presets.yml
+ruby generate_docs.rb
 ```
+
+## Config-Driven Presets
+
+All LUT types are defined in `presets.yml`. Each preset is a pipeline of ordered processing steps (exposure, black crush, skin correction, etc.). Adding a new LUT type means adding a YAML entry — no Ruby code changes needed.
 
 ## Available LUT Types
 
 | Type | What it fixes |
 |------|--------------|
 | `night_warm_fix` | **All-in-one** for underexposed scenes with warm/red practicals. ~1 stop lift + skin hue shift + black crush. No desaturation — preserves vivid reds. Use with just AMIRA. |
+| `night_purple_fix` | **All-in-one** for underexposed scenes with purple/magenta stage lighting. RGB rebalancing + ~2 stop lift + purple desat + skin hue shift + black crush. Preserves atmospheric purple while fixing skin. |
 | `yellow_fix` | Warm amber/yellow cast from stage lighting. H=10-60, 55% desat. |
 | `warm_skin_cast_fix` | Sunburnt/flushed red skin from warm practicals. Hue shift to peach, skin-only targeting. |
 | `overexposure_fix` | Scene-wide ~1 stop reduction with highlight rolloff. |
@@ -51,6 +59,10 @@ LUTs can be stacked on separate adjustment layers / nodes. Common stacks:
 **Night scene with warm practicals (simplest):**
 1. Camera conversion LUT (e.g. AMIRA LogC to Rec.709)
 2. Night Warm Fix (single LUT handles everything)
+
+**Night scene with purple stage lighting:**
+1. Camera conversion LUT (e.g. AMIRA LogC to Rec.709)
+2. Night Purple Fix (single LUT handles everything)
 
 **Overexposed footage:**
 1. Camera conversion LUT

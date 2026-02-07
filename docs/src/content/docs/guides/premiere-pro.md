@@ -57,6 +57,22 @@ V2: Red_Skin_Fix_Skin_Only_Hue_to_Peach.cube
 V1: Clip + camera conversion LUT
 ```
 
+### Night scene with warm practicals
+```
+V2: Night_Warm_Fix.cube (single LUT handles everything)
+V1: Clip + AMIRA_Default_LogC2Rec709.cube (Input LUT)
+```
+
+The `night_warm_fix` preset combines underexposure lift, skin hue correction, and black crush into a single LUT. No stacking needed.
+
+### Night scene with purple stage lighting
+```
+V2: Night_Purple_Fix.cube (single LUT handles everything)
+V1: Clip + AMIRA_Default_LogC2Rec709.cube (Input LUT)
+```
+
+The `night_purple_fix` preset handles RGB rebalancing, exposure lift, purple desaturation, skin hue correction, and black crush in one pass.
+
 ## Noise Reduction
 
 Premiere Pro has no built-in temporal/spatial noise reduction. Options:

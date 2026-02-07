@@ -1,0 +1,213 @@
+# presets.yml — Config-driven LUT presets for generate_lut.rb
+#
+# Each preset defines a pipeline of ordered steps. The Ruby code provides
+# generic step handlers. Each parameter stores the value at full strength.
+# Code interpolates: actual = neutral + (target - neutral) * strength
+#
+# Step types:
+#   hue_desat          — hue-targeted desaturation + optional hue shift
+#   skin_correction    — hue shift with 3-way (hue+lum+sat) window + optional adaptive desat
+#   skin_highlight     — skin-targeted highlight rolloff + desat
+#   exposure           — gamma + shadow lift
+#   highlight_protect  — soft knee compression
+#   black_crush        — shadow steepening
+#   shadow_sat_boost   — saturation boost in shadows
+#   global_highlight_desat — desaturate blown highlights
+#   rgb_rebalance      — per-channel gains, luminance-adaptive
+
+yellow_fix:
+  title: "Yellow Cast Fix - Stage Lighting"
+  comments:
+    - "Yellow/Amber Cast Fix LUT"
+    - "Targets warm stage lighting cast (H=10-60 degrees)"
+    - "Apply AFTER LogC to Rec.709 conversion"
+    - "Compatible with DaVinci Resolve and Adobe Premiere Pro"
+  pipeline:
+    - step: hue_desat
+      hue_center: 35.0
+      hue_width: 25.0
+      softness: 10.0
+      sat_reduce: 0.45
+      hue_shift: -5.0
+      min_sat: 0.02
+      sat_scaling_ref: 0.5
+
+warm_skin_cast_fix:
+  title: "Warm Skin Cast Fix - Red/Orange Practical Light"
+  comments:
+    - "Fixes red/orange cast on skin from warm practical lights"
+    - "Targets H=355-45 degrees (red through orange), 75% desaturation"
+    - "Only affects warm saturated tones - cool tones untouched"
+    - "Apply AFTER LogC to Rec.709 conversion"
+    - "Compatible with DaVinci Resolve and Adobe Premiere Pro"
+  pipeline:
+    - step: skin_correction
+      hue_center: 10.0
+      hue_width: 22.0
+      hue_soft: 8.0
+      hue_shift: 8.0
+      lum_low: 0.10
+      lum_high: 0.78
+      lum_soft: 0.10
+      sat_low: 0.06
+      sat_high: 0.80
+      sat_soft: 0.12
+      adaptive_desat: true
+      desat_baseline: 0.85
+      desat_range: 0.20
+      desat_sat_ref: 0.30
+      desat_sat_range: 0.70
+
+skin_highlight_fix:
+  title: "Skin Highlight Fix - Overexposure Recovery"
+  comments:
+    - "Skin Highlight Rolloff LUT"
+    - "Compresses overexposed skin tones with soft knee"
+    - "Apply AFTER LogC to Rec.709 conversion"
+    - "Compatible with DaVinci Resolve and Adobe Premiere Pro"
+  pipeline:
+    - step: skin_highlight
+      skin_hue_center: 25.0
+      skin_hue_width: 25.0
+      skin_softness: 12.0
+      knee_start: 0.70
+      knee_ceiling: 0.92
+      global_knee: 0.85
+      global_ceiling: 0.97
+      hot_desat: 0.7
+      min_sat_ratio: 0.15
+
+overexposure_fix:
+  title: "Scene Overexposure Fix"
+  comments:
+    - "Scene-wide overexposure correction (~1 stop reduction)"
+    - "Global gamma + highlight rolloff + skin protection"
+    - "Apply AFTER LogC to Rec.709 conversion"
+    - "Compatible with DaVinci Resolve and Adobe Premiere Pro"
+  pipeline:
+    - step: exposure
+      gamma: 1.35
+      shadow_lift: 0.0
+    - step: highlight_protect
+      knee_start: 0.55
+      knee_ceiling: 0.85
+    - step: skin_rolloff
+      skin_hue_center: 25.0
+      skin_hue_width: 25.0
+      skin_softness: 12.0
+      knee_start: 0.50
+      knee_ceiling: 0.78
+      min_sat: 0.03
+    - step: global_highlight_desat
+      threshold: 0.65
+      desat_amount: 0.25
+
+underexposure_fix:
+  title: "Scene Underexposure Fix"
+  comments:
+    - "Scene-wide underexposure lift (~1.2 stops)"
+    - "Global gamma lift + shadow recovery + highlight protection"
+    - "Apply AFTER LogC to Rec.709 conversion"
+    - "Compatible with DaVinci Resolve and Adobe Premiere Pro"
+  pipeline:
+    - step: exposure
+      gamma: 0.70
+      shadow_lift: 0.03
+    - step: highlight_protect
+      knee_start: 0.80
+      knee_ceiling: 0.95
+    - step: shadow_sat_boost
+      boost: 0.10
+      range_low: 0.05
+      range_high: 0.50
+
+black_crush:
+  title: "Black Crush - Shadow Floor"
+  comments:
+    - "Crushes milky/lifted blacks to true black"
+    - "Only affects shadows below 25% luminance"
+    - "Apply AFTER LogC to Rec.709 conversion"
+    - "Compatible with DaVinci Resolve and Adobe Premiere Pro"
+  pipeline:
+    - step: black_crush
+      black_threshold: 0.12
+      crush_gamma: 2.50
+      transition_end: 0.25
+
+night_warm_fix:
+  title: "Night Warm Fix - Underexposed + Red Practicals"
+  comments:
+    - "All-in-one fix for underexposed scenes with warm/red practical lights"
+    - "Combines: ~1 stop lift + skin hue shift + black crush"
+    - "No desaturation — preserves vivid reds from practicals"
+    - "Use with AMIRA LUT only — replaces the multi-LUT chain"
+    - "Apply AFTER LogC to Rec.709 conversion"
+    - "Compatible with DaVinci Resolve and Adobe Premiere Pro"
+  pipeline:
+    - step: exposure
+      gamma: 0.72
+      shadow_lift: 0.02
+    - step: highlight_protect
+      knee_start: 0.82
+      knee_ceiling: 0.95
+    - step: black_crush
+      black_threshold: 0.10
+      crush_gamma: 2.20
+      transition_end: 0.22
+    - step: skin_correction
+      hue_center: 10.0
+      hue_width: 22.0
+      hue_soft: 8.0
+      hue_shift: 8.0
+      lum_low: 0.08
+      lum_high: 0.78
+      lum_soft: 0.08
+      sat_low: 0.06
+      sat_high: 0.80
+      sat_soft: 0.10
+      adaptive_desat: false
+
+night_purple_fix:
+  title: "Night Purple Fix - Underexposed + Purple/Magenta Stage Lighting"
+  comments:
+    - "All-in-one fix for underexposed scenes with purple/magenta stage lighting"
+    - "Combines: RGB rebalancing + ~2 stop lift + purple desat + skin hue shift + black crush"
+    - "Counters purple cast (R+B elevated, G suppressed) via channel gains"
+    - "Shifts purple-contaminated skin hues toward natural tones"
+    - "Apply AFTER LogC to Rec.709 conversion (e.g. AMIRA_Default_LogC2Rec709)"
+    - "Compatible with DaVinci Resolve and Adobe Premiere Pro"
+  pipeline:
+    - step: rgb_rebalance
+      r_gain: 0.97
+      g_gain: 1.08
+      b_gain: 0.90
+      gain_ramp: 0.15
+    - step: exposure
+      gamma: 0.82
+      shadow_lift: 0.008
+    - step: highlight_protect
+      knee_start: 0.85
+      knee_ceiling: 0.96
+    - step: black_crush
+      black_threshold: 0.10
+      crush_gamma: 2.80
+      transition_end: 0.25
+    - step: hue_desat
+      hue_center: 300.0
+      hue_width: 50.0
+      softness: 15.0
+      sat_reduce: 0.45
+      hue_shift: 0.0
+      min_sat: 0.05
+    - step: skin_correction
+      hue_center: 325.0
+      hue_width: 35.0
+      hue_soft: 12.0
+      hue_shift: 40.0
+      lum_low: 0.02
+      lum_high: 0.75
+      lum_soft: 0.04
+      sat_low: 0.05
+      sat_high: 0.75
+      sat_soft: 0.10
+      adaptive_desat: false

@@ -90,7 +90,7 @@ When API isn't sufficient (need qualifiers/HSL Secondary):
 
 ### Option D: Custom .cube LUT Generation (No Studio Required)
 
-Generate targeted correction LUTs programmatically using `generate_lut.rb`. These work in both Resolve and Premiere with no API or Studio dependency.
+Generate targeted correction LUTs programmatically using `generate_lut.rb`. Presets are config-driven via `presets.yml` — add new LUT types by editing YAML, no Ruby changes needed. These work in both Resolve and Premiere with no API or Studio dependency.
 
 ```bash
 # Remove warm amber/yellow cast from stage lighting
@@ -103,9 +103,13 @@ ruby generate_lut.rb skin_highlight_fix /path/to/output.cube
 ruby generate_lut.rb yellow_fix /path/to/output.cube --strength=0.5
 ```
 
+To create a custom preset, add an entry to `presets.yml` with a pipeline of steps (exposure, black_crush, skin_correction, hue_desat, etc.) and run `ruby generate_lut.rb my_preset output.cube`.
+
 Available LUT types:
 - **yellow_fix** — Targets H=10°-60° (warm amber/yellow), reduces saturation 55%, shifts hue toward neutral. For stage lighting spill.
 - **warm_skin_cast_fix** — Fixes sunburnt/flushed red skin from warm practical lights. Shifts red skin hues toward peach. Only targets skin luminance+saturation range — leaves light sources, deck, and saturated objects alone.
+- **night_warm_fix** — All-in-one for underexposed warm/red practical scenes. ~1 stop lift + skin hue shift + black crush. No desaturation.
+- **night_purple_fix** — All-in-one for underexposed purple/magenta stage lighting. RGB channel rebalancing (boost G, reduce B) + ~2 stop lift + purple desaturation + skin hue shift from purple toward natural + black crush. Preserves atmospheric purple from stage lights while making skin look natural. Developed for SSMC 2025 salsa performances.
 - **overexposure_fix** — Scene-wide ~1 stop reduction with highlight rolloff from 55%. For blown-out footage.
 - **underexposure_fix** — Scene-wide ~1.2 stop lift with shadow recovery and highlight protection. For dark footage.
 - **black_crush** — Crushes milky/lifted blacks below 12% luminance to true black.
@@ -153,6 +157,50 @@ Key concepts for understanding what the LUT generator does and how to create new
 - **RGB channel rebalancing** (reduce R, boost B) cools warm tones toward neutral white — better for temperature correction.
 - **Hue shifting** (rotate in HSL) moves colors without losing vibrancy — best for "sunburnt skin → peach" type fixes.
 - Use **luminance + saturation windows** to isolate skin from light sources and saturated objects at similar hues.
+
+### Frame Analysis Workflow for New LUT Development
+
+When fixing a specific clip, follow this workflow to diagnose and build a correction LUT:
+
+1. **Extract a frame** at the target timecode using ffmpeg:
+   ```bash
+   # Get starting timecode and frame rate from the clip
+   ffprobe -v error -show_entries stream_tags=timecode -show_entries stream=r_frame_rate -of default video.mp4
+   # Calculate offset: (target_tc - start_tc) in seconds
+   # Extract frame at that offset
+   ffmpeg -y -ss <offset_seconds> -i video.mp4 -vframes 1 -vf "scale=1280:-1" tmp/frames/raw_frame.png
+   ```
+
+2. **Apply the conversion LUT** (e.g., AMIRA LogC→Rec709) to get the Rec.709 starting point:
+   ```bash
+   ffmpeg -y -i raw_frame.png -vf "lut3d='/path/to/AMIRA_Default_LogC2Rec709.cube'" amira_applied.png
+   ```
+   AMIRA LUT location (Premiere Pro): `C:\Program Files\Adobe\Adobe Premiere Pro 2025\Lumetri\LUTs\Technical\AMIRA_Default_LogC2Rec709.cube`
+
+3. **Analyze color regions** using Python or `analyze_frame.rb` to get HSV stats for skin, neutrals, and problem areas. Sample 5-8 regions: skin (multiple faces), ceiling/walls (should be neutral), floor, clothing (white reference), light sources.
+
+4. **Identify the correction needed** based on the analysis:
+   - Warm/amber cast → `yellow_fix`
+   - Red/flushed skin → `warm_skin_cast_fix`
+   - Underexposed + warm → `night_warm_fix`
+   - Purple/magenta cast → `night_purple_fix`
+   - If no existing type fits, create a new one following the same pattern
+
+5. **Generate and test** the correction LUT, applying it after the conversion LUT:
+   ```bash
+   ruby generate_lut.rb <type> /path/to/output.cube
+   ffmpeg -y -i raw_frame.png -vf "lut3d='conversion.cube',lut3d='correction.cube'" result.png
+   ```
+
+6. **Iterate** by comparing before/after color stats until skin tones are in the H=10-35° range and neutral areas are desaturated.
+
+### Key Lesson: Purple vs Warm Cast Correction
+
+Purple/magenta stage lighting (H=270-330°) requires a fundamentally different approach than warm/red casts:
+- **Warm cast**: R channel elevated → fix with HSL desaturation/hue shift in orange range
+- **Purple cast**: R+B elevated, G suppressed → must fix with RGB channel rebalancing FIRST (boost G, reduce B), then HSL corrections
+
+The RGB rebalancing must be **luminance-adaptive** — scale the gain adjustments by pixel brightness. Very dark pixels (lum < 12%) get minimal rebalancing to avoid wild hue swings. Without this, dark shadows shift from purple to green.
 
 ### Targeting Skin Specifically in a LUT
 Skin tones occupy a narrow band: H=10-35°, S=0.10-0.45, L=0.25-0.75. Light sources, colored objects, and surfaces may overlap in hue but differ in saturation and luminance:

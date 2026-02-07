@@ -24,6 +24,7 @@ export default defineConfig({
 					label: 'Reference',
 					items: [
 						{ label: 'LUT Types', slug: 'reference/lut-types' },
+						{ label: 'Preset Configuration', slug: 'reference/presets-config' },
 						{ label: 'Frame Analysis', slug: 'reference/analyze-frame' },
 						{ label: 'Color Science', slug: 'reference/color-science' },
 					],
