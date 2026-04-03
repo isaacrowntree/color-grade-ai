@@ -81,6 +81,14 @@ ffmpeg -i input.mp4 \
 | `analyze_frame.rb` | Get HSV/RGB stats for a specific region |
 | `preview.html` | Interactive in-browser node chain previewer |
 
+### Interactive Preview
+
+Drag-and-drop a frame, load your conversion LUT, and dial in corrections across a 6-node chain — all in the browser. Creative presets apply curated looks with one click.
+
+![Preview UI](docs/public/preview-screenshot.png)
+
+`python3 -m http.server 8080` then open `http://localhost:8080/preview.html`
+
 ## LUT Presets
 
 ### Correction LUTs
