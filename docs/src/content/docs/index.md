@@ -1,8 +1,6 @@
 ---
-name: color-grade
-description: Generate .cube 3D LUTs for color correction in DaVinci Resolve and Adobe Premiere Pro. Auto-analyze frames, recommend node settings, and preview grades interactively in-browser. Use when the user needs color grading, LUT generation, frame analysis, or auto-grade recommendations.
-argument-hint: [lut-type] [output-path]
-allowed-tools: Read, Bash(ruby *), Bash(python3 *), Bash(ffmpeg *), Bash(ffprobe *), Write, Glob, Grep
+title: color-grade-ai
+description: AI-powered .cube LUT generation for color correction in DaVinci Resolve and Adobe Premiere Pro
 ---
 
 # Color Grade AI

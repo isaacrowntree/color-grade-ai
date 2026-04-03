@@ -1,0 +1,502 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Color Grade Preview</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #1a1a1a; color: #e0e0e0; }
+  .header { padding: 16px 24px; background: #222; border-bottom: 1px solid #333; display: flex; align-items: center; gap: 16px; }
+  .header h1 { font-size: 18px; font-weight: 600; }
+  .header-controls { display: flex; gap: 8px; align-items: center; margin-left: auto; }
+  .header-controls label { font-size: 11px; color: #888; }
+  .header-controls input { background: #2a2a2a; color: #e0e0e0; border: 1px solid #444; padding: 4px 8px; border-radius: 4px; font-size: 12px; width: 280px; }
+  .main { display: flex; height: calc(100vh - 56px); }
+  .canvas-area { flex: 1; display: flex; align-items: center; justify-content: center; background: #111; overflow: hidden; }
+  canvas { max-width: 100%; max-height: 100%; }
+  .sidebar { width: 360px; min-width: 360px; overflow-y: auto; border-left: 1px solid #333; background: #1e1e1e; }
+  .node-card { border-bottom: 1px solid #333; padding: 14px 16px; transition: opacity 0.15s; }
+  .node-card.disabled { opacity: 0.35; }
+  .node-header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .node-num { font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 3px; transition: background 0.15s; }
+  .node-title { font-size: 13px; font-weight: 600; flex: 1; }
+  .node-toggle { cursor: pointer; font-size: 18px; user-select: none; transition: color 0.15s; }
+  select { width: 100%; background: #2a2a2a; color: #e0e0e0; border: 1px solid #444; padding: 6px 8px; border-radius: 4px; font-size: 12px; margin-bottom: 8px; }
+  select:focus { outline: none; border-color: #2563eb; }
+  .slider-row { display: flex; align-items: center; gap: 8px; }
+  .slider-label { font-size: 11px; color: #888; min-width: 52px; }
+  .slider-val { font-size: 11px; color: #aaa; min-width: 36px; text-align: right; }
+  input[type=range] { flex: 1; accent-color: #2563eb; height: 4px; }
+  .status { padding: 8px 16px; background: #222; font-size: 11px; border-bottom: 1px solid #333; }
+  .btn-row { padding: 12px 16px; border-bottom: 1px solid #333; display: flex; gap: 8px; flex-wrap: wrap; }
+  .btn { padding: 6px 14px; border-radius: 4px; border: 1px solid #444; background: #2a2a2a; color: #e0e0e0; cursor: pointer; font-size: 12px; }
+  .btn:hover { background: #333; }
+  .hint { font-size: 10px; color: #555; margin-top: 4px; }
+  .cine-label { font-size: 11px; color: #f59e0b; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 6px; padding: 6px 0; }
+  .cine-label input { accent-color: #f59e0b; }
+  .drop-zone { border: 2px dashed #444; border-radius: 8px; padding: 40px; text-align: center; color: #666; font-size: 14px; cursor: pointer; transition: border-color 0.2s; }
+  .drop-zone:hover, .drop-zone.active { border-color: #2563eb; color: #aaa; }
+  .conv-note { font-size: 10px; color: #666; padding: 4px 0; border-top: 1px solid #333; margin-top: 8px; }
+  .conv-note a { color: #2563eb; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<script type="module">
+import { h, render } from 'https://esm.sh/preact@10.25.4';
+import { useState, useRef, useCallback } from 'https://esm.sh/preact@10.25.4/hooks';
+import htm from 'https://esm.sh/htm@3.1.1';
+
+const html = htm.bind(h);
+
+// ── LUT Engine ─────────────────────────────────────────────────────
+
+class LUT3D {
+  constructor(size, table) { this.size = size; this.table = table; }
+
+  static parse(text) {
+    let size = 0;
+    const data = [];
+    for (const line of text.split('\n')) {
+      const t = line.trim();
+      if (!t || t[0] === '#' || t.startsWith('TITLE') || t.startsWith('DOMAIN_')) continue;
+      if (t.startsWith('LUT_3D_SIZE')) { size = parseInt(t.split(/\s+/)[1]); continue; }
+      const p = t.split(/\s+/);
+      if (p.length >= 3) {
+        const r = parseFloat(p[0]), g = parseFloat(p[1]), b = parseFloat(p[2]);
+        if (!isNaN(r)) data.push(r, g, b);
+      }
+    }
+    return new LUT3D(size, new Float32Array(data));
+  }
+
+  apply(imgData, strength) {
+    const d = imgData.data, s = this.size - 1, t = this.table, sz = this.size, sz2 = sz * sz;
+    for (let i = 0, len = d.length; i < len; i += 4) {
+      const r = d[i] / 255, g = d[i+1] / 255, b = d[i+2] / 255;
+      const rc = Math.min(Math.max(r, 0), 1), gc = Math.min(Math.max(g, 0), 1), bc = Math.min(Math.max(b, 0), 1);
+      const ri = rc * s, gi = gc * s, bi = bc * s;
+      const r0 = Math.min(ri | 0, s-1), g0 = Math.min(gi | 0, s-1), b0 = Math.min(bi | 0, s-1);
+      const rf = ri - r0, gf = gi - g0, bf = bi - b0;
+      const base = (b0*sz2 + g0*sz + r0) * 3;
+      const sr = 3, sg = sz * 3, sb = sz2 * 3;
+      for (let ch = 0; ch < 3; ch++) {
+        const c00 = t[base+ch] + (t[base+sr+ch] - t[base+ch]) * rf;
+        const c10 = t[base+sg+ch] + (t[base+sr+sg+ch] - t[base+sg+ch]) * rf;
+        const c01 = t[base+sb+ch] + (t[base+sr+sb+ch] - t[base+sb+ch]) * rf;
+        const c11 = t[base+sg+sb+ch] + (t[base+sr+sg+sb+ch] - t[base+sg+sb+ch]) * rf;
+        const val = (c00 + (c10 - c00) * gf) + ((c01 + (c11 - c01) * gf) - (c00 + (c10 - c00) * gf)) * bf;
+        const orig = d[i+ch] / 255;
+        d[i+ch] = Math.min(255, Math.max(0, ((orig + (val - orig) * strength) * 255 + 0.5) | 0));
+      }
+    }
+  }
+}
+
+const lutCache = {};
+
+async function loadLUT(nameOrFile) {
+  // If it's a File object (user-provided), parse directly
+  if (nameOrFile instanceof File) {
+    const key = 'file:' + nameOrFile.name;
+    if (lutCache[key]) return lutCache[key];
+    lutCache[key] = LUT3D.parse(await nameOrFile.text());
+    return lutCache[key];
+  }
+  // Otherwise fetch from server
+  if (lutCache[nameOrFile]) return lutCache[nameOrFile];
+  const r = await fetch('correction_luts/' + nameOrFile + '.cube');
+  if (!r.ok) throw new Error(nameOrFile + ': ' + r.status);
+  lutCache[nameOrFile] = LUT3D.parse(await r.text());
+  return lutCache[nameOrFile];
+}
+
+// ── Canvas Renderer ────────────────────────────────────────────────
+
+let renderVersion = 0;
+
+async function renderCanvas(canvasEl, baseData, config, onStatus) {
+  if (!baseData) return;
+  const version = ++renderVersion;
+  onStatus('Processing...', true);
+  const t0 = performance.now();
+
+  const imgData = new ImageData(
+    new Uint8ClampedArray(baseData.data), baseData.width, baseData.height
+  );
+
+  try {
+    // Node 1: Conversion
+    if (config.conv.enabled && config.conv.value) {
+      const lut = await loadLUT(config.conv.value);
+      if (version !== renderVersion) return;
+      lut.apply(imgData, 1.0);
+    }
+
+    // Cine compensation
+    if (config.cineComp) {
+      const lut = await loadLUT('sgamut3_to_cine');
+      if (version !== renderVersion) return;
+      lut.apply(imgData, 1.0);
+    }
+
+    // Correction nodes
+    for (const node of config.nodes) {
+      if (version !== renderVersion) return;
+      if (!node.enabled || !node.value || node.value === 'none' || node.strength === 0) continue;
+      const lut = await loadLUT(node.value);
+      if (version !== renderVersion) return;
+      lut.apply(imgData, node.strength / 100);
+    }
+  } catch (e) {
+    console.error(e);
+    onStatus('Error: ' + e.message, false);
+    return;
+  }
+
+  if (version !== renderVersion) return;
+  canvasEl.getContext('2d').putImageData(imgData, 0, 0);
+  onStatus('Done (' + Math.round(performance.now() - t0) + 'ms)', false);
+}
+
+// ── Node definitions ───────────────────────────────────────────────
+// Correction LUTs ship with the repo (generated by generate_lut.rb).
+// Conversion LUTs are user-provided or fetched from luts/ if available.
+
+const NODE_DEFS = [
+  { id: 2, title: 'Contrast / Exposure', options: [
+    { value: 'none', label: '— None —' },
+    { value: 'studio_punch', label: 'Studio Punch (subtle)' },
+    { value: 'film_contrast', label: 'Film Contrast (stronger)' },
+    { value: 'flat_lift', label: 'Flat Lift (softer shadows)' },
+  ]},
+  { id: 3, title: 'Color Temperature', options: [
+    { value: 'none', label: '— None —' },
+    { value: 'warm_shift', label: 'Warm Shift' },
+    { value: 'cool_shift', label: 'Cool Shift' },
+    { value: 'led_green_fix', label: 'LED Green Fix' },
+  ]},
+  { id: 4, title: 'Skin Tone', options: [
+    { value: 'none', label: '— None —' },
+    { value: 'red_skin_fix', label: 'Red Skin Fix (hue to peach)' },
+  ]},
+  { id: 5, title: 'Saturation', options: [
+    { value: 'none', label: '— None —' },
+    { value: 'sat_boost', label: 'Saturation Boost (+15%)' },
+    { value: 'sat_reduce', label: 'Saturation Reduce (-15%)' },
+  ]},
+  { id: 6, title: 'Black Level', options: [
+    { value: 'none', label: '— None —' },
+    { value: 'black_crush', label: 'Black Crush (deeper shadows)' },
+    { value: 'black_lift', label: 'Black Lift (faded look)' },
+  ]},
+];
+
+const INITIAL_NODES = NODE_DEFS.map(n => ({ id: n.id, enabled: true, value: 'none', strength: 100 }));
+
+// Creative presets: pre-configured node chains for common scenarios
+const CREATIVE_PRESETS = {
+  'none': { label: '— Custom —', conv: null, cine: null, nodes: null },
+  'studio_clean': {
+    label: 'Studio Clean (natural bright)',
+    desc: 'Gentle punch + sat boost. Open, natural, no fading.',
+    conv: null,
+    cine: false,
+    nodes: [
+      { id: 2, enabled: true, value: 'studio_punch', strength: 50 },
+      { id: 3, enabled: true, value: 'none', strength: 100 },
+      { id: 4, enabled: true, value: 'none', strength: 100 },
+      { id: 5, enabled: true, value: 'sat_boost', strength: 50 },
+      { id: 6, enabled: true, value: 'none', strength: 100 },
+    ],
+  },
+  'studio_balanced': {
+    label: 'Studio Balanced (warm natural)',
+    desc: 'Subtle warmth + sat boost + gentle crush. The sweet spot.',
+    conv: null,
+    cine: false,
+    nodes: [
+      { id: 2, enabled: true, value: 'studio_punch', strength: 80 },
+      { id: 3, enabled: true, value: 'warm_shift', strength: 30 },
+      { id: 4, enabled: true, value: 'none', strength: 100 },
+      { id: 5, enabled: true, value: 'sat_boost', strength: 50 },
+      { id: 6, enabled: true, value: 'black_crush', strength: 15 },
+    ],
+  },
+  'studio_dance': {
+    label: 'Studio Dance (warm cinematic)',
+    desc: 'Warmer tone + more saturation + moderate crush. Cinematic with shadow detail.',
+    conv: null,
+    cine: false,
+    nodes: [
+      { id: 2, enabled: true, value: 'studio_punch', strength: 100 },
+      { id: 3, enabled: true, value: 'warm_shift', strength: 40 },
+      { id: 4, enabled: true, value: 'none', strength: 100 },
+      { id: 5, enabled: true, value: 'sat_boost', strength: 60 },
+      { id: 6, enabled: true, value: 'black_crush', strength: 25 },
+    ],
+  },
+  'studio_film': {
+    label: 'Studio Film (moody cinematic)',
+    desc: 'Higher contrast + slight desat + deeper shadows. Moody, filmic.',
+    conv: null,
+    cine: false,
+    nodes: [
+      { id: 2, enabled: true, value: 'film_contrast', strength: 60 },
+      { id: 3, enabled: true, value: 'warm_shift', strength: 20 },
+      { id: 4, enabled: true, value: 'none', strength: 100 },
+      { id: 5, enabled: true, value: 'sat_reduce', strength: 30 },
+      { id: 6, enabled: true, value: 'black_crush', strength: 40 },
+    ],
+  },
+};
+
+// ── Components ─────────────────────────────────────────────────────
+
+function NodeCard({ def, state, onUpdate }) {
+  const active = state.enabled && state.value && state.value !== 'none';
+  return html`
+    <div class="node-card ${state.enabled ? '' : 'disabled'}">
+      <div class="node-header">
+        <span class="node-num" style="background:${active ? '#2563eb' : '#444'}">${def.id}</span>
+        <span class="node-title">${def.title}</span>
+        <span class="node-toggle" style="color:${state.enabled ? '#4ade80' : '#666'}"
+              onClick=${() => onUpdate({ enabled: !state.enabled })}>●</span>
+      </div>
+      <select value=${state.value} onChange=${e => onUpdate({ value: e.target.value })}>
+        ${def.options.map(o => html`<option value=${o.value}>${o.label}</option>`)}
+      </select>
+      <div class="slider-row">
+        <span class="slider-label">Strength</span>
+        <input type="range" min="0" max="100" value=${state.strength}
+               onInput=${e => onUpdate({ strength: parseInt(e.target.value) })} />
+        <span class="slider-val">${state.strength}%</span>
+      </div>
+    </div>
+  `;
+}
+
+function App() {
+  const canvasRef = useRef(null);
+  const baseDataRef = useRef(null);
+  const stateRef = useRef();
+
+  const [status, setStatus] = useState('Drop or load an image to begin');
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [imageLoaded, setImageLoaded] = useState(false);
+  const [imageName, setImageName] = useState('');
+  const [dragActive, setDragActive] = useState(false);
+
+  // Conversion LUT state
+  const [convEnabled, setConvEnabled] = useState(true);
+  const [convValue, setConvValue] = useState(null); // null = no LUT, string = server path, File = user file
+  const [convLabel, setConvLabel] = useState('— None —');
+  const [convFiles, setConvFiles] = useState([]); // user-added .cube Files
+  const [cineComp, setCineComp] = useState(false);
+
+  // Correction nodes
+  const [nodes, setNodes] = useState(INITIAL_NODES);
+  const [creativePreset, setCreativePreset] = useState('none');
+
+  stateRef.current = {
+    conv: { enabled: convEnabled, value: convValue },
+    cineComp,
+    nodes,
+  };
+
+  const scheduleRender = useCallback(() => {
+    renderCanvas(canvasRef.current, baseDataRef.current, stateRef.current,
+      (msg, p) => { setStatus(msg); setIsProcessing(!!p); });
+  }, []);
+
+  // ── Image loading ──────────────────────────────────────────────
+
+  const loadImage = useCallback((source, name) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      const c = canvasRef.current;
+      c.width = img.width; c.height = img.height;
+      const ctx = c.getContext('2d', { willReadFrequently: true });
+      ctx.drawImage(img, 0, 0);
+      baseDataRef.current = ctx.getImageData(0, 0, c.width, c.height);
+      setImageLoaded(true);
+      setImageName(name);
+      setStatus('Image loaded: ' + name);
+      scheduleRender();
+    };
+    img.onerror = () => setStatus('Failed to load image');
+    if (source instanceof File) {
+      img.src = URL.createObjectURL(source);
+    } else {
+      img.src = source;
+    }
+  }, [scheduleRender]);
+
+  const handleDrop = useCallback((e) => {
+    e.preventDefault();
+    setDragActive(false);
+    const file = e.dataTransfer?.files?.[0];
+    if (file && file.type.startsWith('image/')) loadImage(file, file.name);
+  }, [loadImage]);
+
+  const handleFileInput = useCallback((e) => {
+    const file = e.target.files?.[0];
+    if (file) loadImage(file, file.name);
+  }, [loadImage]);
+
+  // ── Conversion LUT handling ────────────────────────────────────
+
+  const handleConvFile = useCallback((e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setConvFiles(prev => [...prev, file]);
+    setConvValue(file);
+    setConvLabel(file.name);
+    setTimeout(scheduleRender);
+  }, [scheduleRender]);
+
+  const handleConvSelect = useCallback((e) => {
+    const val = e.target.value;
+    if (val === '__none__') {
+      setConvValue(null);
+      setConvLabel('— None —');
+    } else if (val.startsWith('file:')) {
+      const idx = parseInt(val.split(':')[1]);
+      const file = convFiles[idx];
+      setConvValue(file);
+      setConvLabel(file.name);
+    } else {
+      setConvValue(val);
+      setConvLabel(val);
+    }
+    setTimeout(scheduleRender);
+  }, [convFiles, scheduleRender]);
+
+  // ── State updates that trigger render ──────────────────────────
+
+  const setConvEn = (v) => { setConvEnabled(v); setTimeout(scheduleRender); };
+  const setCine = (v) => { setCineComp(v); setTimeout(scheduleRender); };
+
+  const updateNode = useCallback((id, patch) => {
+    setCreativePreset('none'); // switching to custom when manually editing
+    setNodes(prev => prev.map(n => n.id === id ? { ...n, ...patch } : n));
+    setTimeout(scheduleRender);
+  }, [scheduleRender]);
+
+  const applyCreativePreset = useCallback((key) => {
+    setCreativePreset(key);
+    const preset = CREATIVE_PRESETS[key];
+    if (preset.nodes) {
+      setNodes(preset.nodes);
+      if (preset.cine !== null) setCineComp(preset.cine);
+      setTimeout(scheduleRender);
+    }
+  }, [scheduleRender]);
+
+  const resetAll = () => {
+    setConvEnabled(true);
+    setConvValue(null); setConvLabel('— None —');
+    setCineComp(false);
+    setNodes(INITIAL_NODES);
+    setTimeout(scheduleRender);
+  };
+
+  const bypassAll = () => {
+    setConvEnabled(false);
+    setCineComp(false);
+    setNodes(prev => prev.map(n => ({ ...n, enabled: false })));
+    setTimeout(scheduleRender);
+  };
+
+  const convActive = convEnabled && convValue;
+
+  return html`
+    <div class="header">
+      <h1>LUT Preview</h1>
+      <div class="header-controls">
+        <label>Image: ${imageName || 'none'}</label>
+      </div>
+    </div>
+    <div class="main">
+      <div class="canvas-area"
+           onDragOver=${e => { e.preventDefault(); setDragActive(true); }}
+           onDragLeave=${() => setDragActive(false)}
+           onDrop=${handleDrop}>
+        <canvas ref=${canvasRef} style="display:${imageLoaded ? 'block' : 'none'}" />
+        ${!imageLoaded && html`
+          <div class="drop-zone ${dragActive ? 'active' : ''}" onClick=${() => document.getElementById('img-input').click()}>
+            Drop a frame here or click to browse
+            <br/><br/>
+            <span style="font-size:11px;color:#555">PNG or JPG — raw S-Log3 or converted Rec.709</span>
+            <input id="img-input" type="file" accept="image/*" style="display:none" onChange=${handleFileInput} />
+          </div>
+        `}
+      </div>
+      <div class="sidebar">
+        <div class="status" style="color:${isProcessing ? '#f59e0b' : '#666'}">${status}</div>
+        <div class="btn-row">
+          <button class="btn" onClick=${resetAll}>Reset All</button>
+          <button class="btn" onClick=${bypassAll}>Bypass All</button>
+          ${imageLoaded ? html`
+            <button class="btn" onClick=${() => { setImageLoaded(false); setImageName(''); baseDataRef.current = null; }}>Change Image</button>
+          ` : ''}
+        </div>
+
+        <!-- Creative Preset -->
+        <div class="node-card" style="background:#1a2332;border-color:#1e3a5f;">
+          <div class="node-header" style="margin-bottom:4px;">
+            <span style="font-size:13px;font-weight:600;color:#60a5fa;">Creative Preset</span>
+          </div>
+          <select value=${creativePreset} onChange=${e => applyCreativePreset(e.target.value)}>
+            ${Object.entries(CREATIVE_PRESETS).map(([k, v]) => html`<option value=${k}>${v.label}</option>`)}
+          </select>
+          ${creativePreset !== 'none' && CREATIVE_PRESETS[creativePreset]?.desc && html`
+            <div class="hint" style="color:#60a5fa;margin-bottom:4px;">${CREATIVE_PRESETS[creativePreset].desc}</div>
+          `}
+          <div class="hint" style="color:#4b7399;">Sets all correction nodes to a curated look. Edit individual nodes below to customize.</div>
+        </div>
+
+        <!-- Node 1: Conversion LUT -->
+        <div class="node-card ${convEnabled ? '' : 'disabled'}">
+          <div class="node-header">
+            <span class="node-num" style="background:${convActive ? '#2563eb' : '#444'}">1</span>
+            <span class="node-title">Conversion LUT</span>
+            <span class="node-toggle" style="color:${convEnabled ? '#4ade80' : '#666'}"
+                  onClick=${() => setConvEn(!convEnabled)}>●</span>
+          </div>
+          <select onChange=${handleConvSelect}>
+            <option value="__none__" selected=${!convValue}>— None (pass-through) —</option>
+            ${convFiles.map((f, i) => html`<option value=${'file:'+i} selected=${convValue === f}>${f.name}</option>`)}
+          </select>
+          <div style="margin-bottom:8px">
+            <label class="btn" style="display:inline-block;cursor:pointer;font-size:11px;padding:4px 10px;">
+              + Add .cube LUT
+              <input type="file" accept=".cube" style="display:none" onChange=${handleConvFile} />
+            </label>
+          </div>
+          <label class="cine-label">
+            <input type="checkbox" checked=${cineComp} onChange=${e => setCine(e.target.checked)} />
+            S-Gamut3 → Cine compensation (desat ~12%)
+          </label>
+          <div class="hint">Enable Cine comp if your footage is S-Gamut3 but the conversion LUT targets S-Gamut3.Cine</div>
+          <div class="conv-note">
+            Conversion LUTs are camera-specific (e.g. ARRI LogC→709, Sony S-Log3→709).
+            They are not included in this repo — add your own .cube files above.
+          </div>
+        </div>
+
+        <!-- Correction Nodes -->
+        ${NODE_DEFS.map((def, i) => html`
+          <${NodeCard} key=${def.id} def=${def} state=${nodes[i]} onUpdate=${patch => updateNode(def.id, patch)} />
+        `)}
+      </div>
+    </div>
+  `;
+}
+
+render(html`<${App} />`, document.getElementById('app'));
+</script>
+</body>
+</html>

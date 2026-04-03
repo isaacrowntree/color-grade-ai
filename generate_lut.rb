@@ -412,7 +412,16 @@ end
 
 # ── Pipeline runner ──────────────────────────────────────────────────
 
+def step_global_sat(r, g, b, st, cfg, strength)
+  h, s, l = st[:h], st[:s], st[:l]
+  boost = 1.0 + (cfg['boost'] - 1.0) * strength
+  new_s = clamp(s * boost)
+  r, g, b = hsl_to_rgb(h, new_s, l)
+  [r, g, b, st.merge(s: new_s)]
+end
+
 STEP_HANDLERS = {
+  'global_sat'           => method(:step_global_sat),
   'rgb_rebalance'        => method(:step_rgb_rebalance),
   'exposure'             => method(:step_exposure),
   'highlight_protect'    => method(:step_highlight_protect),

@@ -214,6 +214,126 @@ pink_cast_fix:
       crush_gamma: 2.00
       transition_end: 0.20
 
+# ── Node 1.5: Gamut Compensation ───────────────────────────────────
+
+sgamut3_to_cine:
+  title: "S-Gamut3 to S-Gamut3.Cine Compensation"
+  comments:
+    - "Compensates for using S-Gamut3.Cine-calibrated LUTs on S-Gamut3 footage"
+    - "Pulls back saturation ~12% and subtle hue correction"
+    - "Apply BEFORE or AFTER conversion LUT depending on workflow"
+  pipeline:
+    - step: global_sat
+      boost: 0.88
+
+# ── Node 2: Contrast/Exposure presets ──────────────────────────────
+
+studio_punch:
+  title: "Studio Punch - Subtle Contrast Boost"
+  comments:
+    - "Gentle contrast boost for well-lit interiors"
+    - "Slight gamma pull + highlight protection + mild black crush"
+  pipeline:
+    - step: exposure
+      gamma: 1.08
+      shadow_lift: 0.0
+    - step: highlight_protect
+      knee_start: 0.85
+      knee_ceiling: 0.96
+    - step: black_crush
+      black_threshold: 0.06
+      crush_gamma: 1.60
+      transition_end: 0.15
+
+film_contrast:
+  title: "Film Contrast - Stronger Filmic Look"
+  comments:
+    - "More aggressive contrast with deeper shadows and rolled highlights"
+  pipeline:
+    - step: exposure
+      gamma: 1.15
+      shadow_lift: 0.0
+    - step: highlight_protect
+      knee_start: 0.78
+      knee_ceiling: 0.93
+    - step: black_crush
+      black_threshold: 0.08
+      crush_gamma: 2.00
+      transition_end: 0.20
+
+flat_lift:
+  title: "Flat Lift - Softer Shadows"
+  comments:
+    - "Lifts shadows for a softer, more open look"
+  pipeline:
+    - step: exposure
+      gamma: 0.92
+      shadow_lift: 0.02
+
+# ── Node 3: Color Temperature presets ──────────────────────────────
+
+warm_shift:
+  title: "Warm Shift - Add Warmth"
+  comments:
+    - "Subtle warm shift via RGB rebalance"
+  pipeline:
+    - step: rgb_rebalance
+      r_gain: 1.04
+      g_gain: 1.00
+      b_gain: 0.95
+      gain_ramp: 0.05
+
+cool_shift:
+  title: "Cool Shift - Add Coolness"
+  comments:
+    - "Subtle cool shift via RGB rebalance"
+  pipeline:
+    - step: rgb_rebalance
+      r_gain: 0.96
+      g_gain: 1.00
+      b_gain: 1.04
+      gain_ramp: 0.05
+
+led_green_fix:
+  title: "LED Green Fix - Reduce Green Tint"
+  comments:
+    - "Fixes green tint from cheap LED or fluorescent lighting"
+  pipeline:
+    - step: rgb_rebalance
+      r_gain: 1.02
+      g_gain: 0.96
+      b_gain: 1.02
+      gain_ramp: 0.05
+
+# ── Node 5: Saturation presets ─────────────────────────────────────
+
+sat_boost:
+  title: "Saturation Boost - +15%"
+  comments:
+    - "Global saturation increase for more vibrancy"
+  pipeline:
+    - step: global_sat
+      boost: 1.15
+
+sat_reduce:
+  title: "Saturation Reduce - -15%"
+  comments:
+    - "Global saturation decrease for a more muted look"
+  pipeline:
+    - step: global_sat
+      boost: 0.85
+
+# ── Node 6: Black Level presets ────────────────────────────────────
+
+black_lift:
+  title: "Black Lift - Faded Blacks"
+  comments:
+    - "Lifts blacks for a vintage/faded look"
+  pipeline:
+    - step: exposure
+      gamma: 0.95
+      shadow_lift: 0.04
+
 night_purple_fix:
   title: "Night Purple Fix - Underexposed + Purple/Magenta Stage Lighting"
   comments:

@@ -4,7 +4,7 @@ Generate targeted .cube 3D LUTs for color correction using AI-assisted frame ana
 
 Built as a [Claude Code](https://claude.ai/claude-code) skill — Claude analyzes your footage, identifies color problems, and generates precise correction LUTs automatically.
 
-[Documentation](https://isaacrowntree.github.io/color-grade-ai) | [Getting Started](#getting-started) | [LUT Types](#lut-types) | [Claude Code Skill](#use-as-a-claude-code-skill)
+[Documentation](https://isaacrowntree.github.io/color-grade-ai) | [Skill Reference](SKILL.md) | [Getting Started](#getting-started) | [Claude Code Skill](#use-as-a-claude-code-skill)
 
 ---
 
@@ -13,13 +13,18 @@ Built as a [Claude Code](https://claude.ai/claude-code) skill — Claude analyze
 Feed it a video frame. It tells you what's wrong and generates a .cube LUT to fix it.
 
 ```bash
-# Analyze a frame region
-ruby analyze_frame.rb frame.png 1500,600,2000,900 skin
-# => H=12.3° S=0.38 V=0.45 — red/flushed skin from warm practical light
+# Auto-analyze a frame and get per-node recommendations
+python3 auto_grade.py frame_709.png
 
-# Generate a targeted fix
+# Generate a correction LUT
 ruby generate_lut.rb red_skin_fix skin_fix.cube
-# => 33x33x33 3D LUT targeting H=354-30°, skin luminance only
+
+# Bake a creative preset into a single LUT
+ruby generate_chain_lut.rb studio_balanced.cube \
+  studio_punch@0.8 warm_shift@0.3 sat_boost@0.5 black_crush@0.15
+
+# Preview grades interactively in-browser
+python3 -m http.server 8080  # then open preview.html
 ```
 
 The generated .cube files are standard 3D LUTs compatible with any software that reads the format — Resolve, Premiere, Final Cut, After Effects, etc.
@@ -29,70 +34,16 @@ The generated .cube files are standard 3D LUTs compatible with any software that
 ### Requirements
 
 - Ruby 2.7+
-- Python 3 with [Pillow](https://pillow.readthedocs.io/) (for frame analysis only)
-- [ffmpeg](https://ffmpeg.org/) (for frame extraction)
-
-### Platform Setup
-
-<details>
-<summary><strong>macOS</strong></summary>
-
-```bash
-# Install Homebrew if you don't have it
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-
-# Install dependencies
-brew install ruby python ffmpeg
-pip3 install Pillow
-```
-</details>
-
-<details>
-<summary><strong>Linux (Ubuntu/Debian)</strong></summary>
-
-```bash
-sudo apt update
-sudo apt install ruby python3 python3-pip ffmpeg
-pip3 install Pillow
-```
-</details>
-
-<details>
-<summary><strong>Windows (WSL recommended)</strong></summary>
-
-Video editors on Windows should use [WSL](https://learn.microsoft.com/en-us/windows/wsl/install) (Windows Subsystem for Linux). This gives you a full Linux terminal alongside your Windows NLE.
-
-```powershell
-# 1. Install WSL (run PowerShell as Administrator)
-wsl --install
-
-# 2. Restart your computer, then open "Ubuntu" from the Start menu
-
-# 3. Inside WSL, install dependencies
-sudo apt update
-sudo apt install ruby python3 python3-pip ffmpeg
-pip3 install Pillow
-```
-
-Your Windows drives are accessible from WSL at `/mnt/c/`, `/mnt/d/`, etc. So if your footage is at `D:\Videos\`, you can access it from WSL at `/mnt/d/Videos/`.
-
-```bash
-# Example: extract a frame from footage on your D: drive
-ffmpeg -i /mnt/d/Videos/my_clip.mov -ss 00:00:30 -frames:v 1 frame.png
-
-# Generate a LUT and save it where Premiere/Resolve can find it
-ruby generate_lut.rb yellow_fix /mnt/d/Videos/LUTs/yellow_fix.cube
-```
-</details>
+- Python 3 with [Pillow](https://pillow.readthedocs.io/) + NumPy (for auto_grade.py)
+- [ffmpeg](https://ffmpeg.org/) (for frame extraction and video encoding)
 
 ### Install
 
 ```bash
 git clone https://github.com/isaacrowntree/color-grade-ai.git
 cd color-grade-ai
+pip3 install Pillow numpy
 ```
-
-No gems or packages to install. The scripts run standalone.
 
 ### Generate Your First LUT
 
@@ -109,123 +60,74 @@ ruby generate_lut.rb yellow_fix yellow_fix_mild.cube --strength=0.5
 
 ### Apply in Your NLE
 
-**DaVinci Resolve:** ([full guide](https://isaacrowntree.github.io/color-grade-ai/guides/davinci-resolve/))
-1. Go to the Color page
-2. Add a serial node after your conversion LUT
-3. Right-click the node → LUT → browse to the .cube file
+**DaVinci Resolve:** Add a serial node after your conversion LUT → right-click → LUT → browse to .cube file.
 
-**Adobe Premiere Pro:** ([full guide](https://isaacrowntree.github.io/color-grade-ai/guides/premiere-pro/))
-1. Add an adjustment layer above your clip
-2. Apply Lumetri Color effect
-3. Creative tab → Look dropdown → browse to the .cube file
+**Adobe Premiere Pro:** Lumetri Color → Creative tab → Look dropdown → browse to .cube file.
 
-## LUT Types
-
-| Type | Problem | What It Does |
-|------|---------|-------------|
-| `yellow_fix` | Yellow/amber cast from stage or practical lights | Desaturates H=10-60° by 55%, shifts hue toward neutral |
-| `red_skin_fix` | Sunburnt/flushed red skin | Shifts red skin hues toward peach. Three-way window (hue + sat + lum) targets only skin, leaves lights and objects alone |
-| `overexposure_fix` | Blown highlights, washed out scene | ~1 stop global reduction + highlight rolloff from 55% + extra skin protection |
-| `underexposure_fix` | Too dark, lost shadow detail | ~1.2 stop lift + shadow recovery + highlight protection |
-| `black_crush` | Milky/lifted blacks | Crushes shadows below 12% luminance with smooth transition |
-| `skin_highlight_fix` | Minor skin overexposure | Subtle rolloff above 70% luminance, skin hues only |
-| `night_warm_fix` | Underexposed + warm/red practicals | All-in-one: ~1 stop lift + skin hue shift + black crush |
-| `night_purple_fix` | Underexposed + purple/magenta stage lighting | All-in-one: RGB rebalancing + ~2 stop lift + purple desat + skin fix + black crush |
-
-Every type supports `--strength=N` (0.0-1.0) and `--size=N` (LUT grid size, default 33). See the [full LUT reference](https://isaacrowntree.github.io/color-grade-ai/reference/lut-types/) for pipeline details and parameters.
-
-## Stacking LUTs
-
-LUTs stack on separate adjustment layers or nodes. Apply your camera conversion LUT first, then stack fixes:
-
-**Overexposed footage:**
-```
-1. ARRI LogC → Rec.709 (or your camera LUT)
-2. Yellow Cast Fix
-3. Overexposure Fix (-1 stop)
-4. Black Crush
-```
-
-**Underexposed footage:**
-```
-1. Camera conversion LUT
-2. Yellow Cast Fix
-3. Underexposure Fix (+1.2 stops)
-```
-
-**Skin correction only:**
-```
-1. Camera conversion LUT
-2. Warm Skin Cast Fix (leaves everything else alone)
-```
-
-**Red blotchy skin / skin conditions:**
-```
-1. Camera conversion LUT
-2. [Any other corrections needed]
-3. Warm Skin Cast Fix (apply after other corrections)
-```
-
-> **Note on skin redness:** The `red_skin_fix` LUT handles red blotchy skin, flushing, and skin conditions by targeting H=354-30° and shifting toward peach. It works well as a final correction for both warm-light casts and red skin. See [Handling Skin Redness](#handling-skin-redness) for details.
-
-## Frame Analysis
-
-Analyze specific regions of a frame to get precise HSV/RGB stats:
-
+**ffmpeg:**
 ```bash
-# Extract a frame
-ffmpeg -i video.mov -ss 00:00:30 -frames:v 1 frame.png
-
-# Analyze the skin area (coordinates: x1,y1,x2,y2)
-ruby analyze_frame.rb frame.png 1800,500,2000,900 skin
-
-# Output:
-# === SKIN ===
-# Avg RGB: R=77.3 G=67.6 B=56.6
-# Avg HSV: H=31.9° S=0.268 V=0.303
-# Hue range: 0.0°-358.5° (std=48.1°)
+ffmpeg -i input.mp4 \
+  -vf "lut3d='conversion.cube':interp=tetrahedral,lut3d='correction.cube':interp=tetrahedral" \
+  output.mp4
 ```
 
-Use this to understand what correction is needed before generating a LUT.
+## Tools
+
+| Tool | Purpose |
+|------|---------|
+| `generate_lut.rb` | Generate a single correction LUT from a preset |
+| `generate_chain_lut.rb` | Bake multiple presets into one LUT |
+| `auto_grade.py` | Analyze a frame and recommend per-node corrections |
+| `analyze_frame.rb` | Get HSV/RGB stats for a specific region |
+| `preview.html` | Interactive in-browser node chain previewer |
+
+## LUT Presets
+
+### Correction LUTs
+
+| Type | What it fixes |
+|------|--------------|
+| `night_warm_fix` | Underexposed warm/red scenes — lift + skin fix + black crush |
+| `night_purple_fix` | Underexposed purple/magenta stage lighting |
+| `yellow_fix` | Yellow/amber cast from stage lighting |
+| `red_skin_fix` | Red/flushed skin from warm practicals |
+| `pink_cast_fix` | Pink/magenta cast from stage lighting |
+| `overexposure_fix` | ~1 stop reduction with highlight rolloff |
+| `underexposure_fix` | ~1.2 stop lift with shadow recovery |
+| `black_crush` | Crush milky/lifted blacks to true black |
+| `skin_highlight_fix` | Skin-only highlight rolloff |
+
+### Node Chain Building Blocks
+
+| Type | Node | What it does |
+|------|------|-------------|
+| `studio_punch` | Contrast | Subtle contrast boost |
+| `film_contrast` | Contrast | Stronger filmic contrast |
+| `flat_lift` | Contrast | Lift shadows for softer look |
+| `warm_shift` | Temperature | Subtle warm shift |
+| `cool_shift` | Temperature | Subtle cool shift |
+| `led_green_fix` | Temperature | Fix green tint from LEDs |
+| `sat_boost` | Saturation | Global +15% saturation |
+| `sat_reduce` | Saturation | Global -15% saturation |
+| `sgamut3_to_cine` | Gamut | S-Gamut3 → Cine compensation |
+| `black_lift` | Black Level | Faded/vintage blacks |
+
+### Creative Presets
+
+| Preset | Look | Chain |
+|--------|------|-------|
+| Studio Clean | Natural bright | studio_punch(50%) + sat_boost(50%) |
+| Studio Balanced | Warm natural | studio_punch(80%) + warm_shift(30%) + sat_boost(50%) + black_crush(15%) |
+| Studio Dance | Warm cinematic | studio_punch(100%) + warm_shift(40%) + sat_boost(60%) + black_crush(25%) |
+| Studio Film | Moody cinematic | film_contrast(60%) + warm_shift(20%) + sat_reduce(30%) + black_crush(40%) |
+
+Pre-baked .cube files for all creative presets are in `correction_luts/`.
 
 ## Use as a Claude Code Skill
 
-This repo is designed to work as a [Claude Code](https://claude.ai/claude-code) skill. When installed, Claude can analyze your footage and generate LUTs conversationally.
-
-### What is Claude Code?
-
-[Claude Code](https://claude.ai/claude-code) is Anthropic's CLI tool that lets Claude (AI) work directly with your files and terminal. Think of it as having an assistant that can see your project, run commands, and generate files — all from a chat interface in your terminal.
-
-If you're a video editor who hasn't used it before, here's how to get going:
-
-**1. Install Node.js** (if you don't have it):
-- macOS: `brew install node`
-- Ubuntu/WSL: `sudo apt install nodejs npm`
-- Or download from [nodejs.org](https://nodejs.org/)
-
-**2. Install Claude Code:**
-```bash
-npm install -g @anthropic-ai/claude-code
-```
-
-**3. Set up your API key:**
-- Create an account at [console.anthropic.com](https://console.anthropic.com)
-- Go to API Keys and create one
-- Claude Code will prompt you for it on first run
-
-**4. Run it:**
-```bash
-cd /path/to/your/video/project
-claude
-```
-
-You're now in a conversation with Claude. It can see your files, run ffmpeg, generate LUTs, and talk to you about color correction like a colleague sitting next to you.
-
-**Skills** are like plugins that give Claude specialized knowledge. When you install this skill, Claude knows how to analyze footage and generate correction LUTs without you having to explain the process.
+This repo is designed to work as a [Claude Code](https://claude.ai/claude-code) skill. When installed, Claude can analyze your footage and generate LUTs conversationally. The full skill reference is in [SKILL.md](SKILL.md).
 
 ### Install the Skill
-
-Clone this repo into your project's Claude skills directory:
 
 ```bash
 # Project-level (for one project)
@@ -245,77 +147,28 @@ Once installed, just talk to Claude naturally:
 > This stage footage is overexposed and has a yellow cast from the lights
 
 > Analyze the frame at 30 seconds and tell me what corrections I need
-
-> Generate LUTs to fix the exposure and color on this clip
 ```
 
-Claude will use the skill to analyze frames, identify problems, and generate the right LUTs.
-
-You can also invoke it directly:
+Or invoke directly:
 
 ```
 > /color-grade red_skin_fix output.cube
 ```
 
-## Handling Skin Redness
+## Documentation
 
-Fair-skinned subjects (especially during physical activity like dancing) often show red blotchy skin on arms, chest, and face. This ranges from mild flushing to visible skin conditions.
+The [documentation site](https://isaacrowntree.github.io/color-grade-ai) is auto-generated from [SKILL.md](SKILL.md), which is the single source of truth for all presets, workflows, and color science notes.
 
-### The Problem
-
-| Skin State | HSV Hue | HSV Saturation |
-|------------|---------|----------------|
-| Healthy skin | 25-40° | 5-20% |
-| Mild flushing | 0-25° | 25-40% |
-| Skin condition patches | 348-5° | 60-90% |
-
-The challenge is that **darker-skinned partners** may have natural skin tones at H=17-20° — right in the middle of the blotchy range. A LUT processes pixels independently and can't distinguish "her red blotch" from "his natural skin tone" based on color alone.
-
-### The Solution
-
-Use `red_skin_fix` — it targets H=354-30° (red through orange skin tones) and shifts them toward peach using a 3-way window (hue + luminance + saturation). This handles both warm-light skin casts and red blotchy skin effectively.
-
-The hue shift happens **before** desaturation, so the remaining color is warm peach — not grey.
-
-### Usage Tips
-
-- **Apply after other corrections** in your LUT chain — it operates best on already-corrected Rec.709 colors.
-- **Use `--strength`** to dial it in. Start at 1.0; if the darker-skinned partner looks too affected, try 0.7.
-- **In Resolve**, you can combine this LUT with a Qualifier (eyedropper on the blotchy area) for even more precise isolation — this completely avoids any spillover onto the partner.
-- Expect a mild hue shift on darker skin tones in the H=15-20° range. This stays within natural warm skin territory (not green or yellow).
+To rebuild the docs:
 
 ```bash
-# Full strength
-ruby generate_lut.rb red_skin_fix skin_fix.cube
-
-# Dialed back for less impact on partner's skin
-ruby generate_lut.rb red_skin_fix skin_fix.cube --strength=0.7
+ruby generate_docs.rb    # regenerate from SKILL.md
+cd docs && npm run build  # build the site (runs generate_docs.rb automatically)
 ```
-
-## How It Works
-
-The LUT generator works in HSL color space. For each point in a 33x33x33 RGB grid:
-
-1. Convert input RGB to HSL
-2. Check if the pixel falls within the correction's targeting window (hue range, saturation range, luminance range)
-3. Apply the correction (hue shift, desaturation, exposure change) proportionally
-4. Convert back to RGB
-5. Write the result to a standard .cube file
-
-This means corrections are mathematically precise and repeatable. The same LUT produces the same result every time on the same footage.
 
 ## Related Projects
 
-- [ButterCut](https://github.com/barefootford/buttercut) — Ruby gem for generating video editing timelines (FCP, Premiere, Resolve) with AI-powered rough cuts. Color-grade-ai was originally developed as part of ButterCut's color grading pipeline.
-
-## Contributing
-
-PRs welcome. Areas that could use help:
-
-- Additional LUT presets for common correction scenarios
-- Support for 1D LUT generation
-- ACES/OCIO color space transforms
-- Integration with DaVinci Resolve's scripting API
+- [ButterCut](https://github.com/barefootford/buttercut) — Ruby gem for generating video editing timelines (FCP, Premiere, Resolve) with AI-powered rough cuts.
 
 ## License
 
