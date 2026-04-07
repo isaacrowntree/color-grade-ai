@@ -101,6 +101,9 @@ ruby generate_lut.rb skin_highlight_fix /path/to/output.cube
 
 # Adjust strength (0.0-1.0)
 ruby generate_lut.rb yellow_fix /path/to/output.cube --strength=0.5
+
+# Compare reference vs output and get adjustment suggestions
+python3 match_grade.py <reference.png> <output.png>
 ```
 
 To create a custom preset, add an entry to `presets.yml` with a pipeline of steps (exposure, black_crush, skin_correction, hue_desat, etc.) and run `ruby generate_lut.rb my_preset output.cube`.
@@ -114,11 +117,31 @@ Available LUT types:
 - **underexposure_fix** — Scene-wide ~1.2 stop lift with shadow recovery and highlight protection. For dark footage.
 - **black_crush** — Crushes milky/lifted blacks below 12% luminance to true black.
 - **skin_highlight_fix** — Subtle skin-only rolloff above 70% luminance. For minor skin overexposure.
+- **golden_warm** — Strong golden warm shift via RGB rebalance (R:1.20, G:1.00, B:0.80). For rich warm cinematic looks.
+- **cinema_dark** — Deep moody contrast with gamma 1.45, shadow lift 0.02, and knee compression (0.72-0.90). For dramatic, filmic contrast.
+
+Node chain building blocks (studio_punch, film_contrast, cinema_dark, warm_shift, golden_warm, cool_shift, sat_boost, sat_reduce, etc.) can be combined via `generate_chain_lut.rb` to bake multi-preset chains into a single .cube LUT — including conversion + creative in one pass.
+
+Creative presets available in the interactive preview:
+- **Studio Clean** — studio_punch(50%) + sat_boost(50%)
+- **Studio Balanced** — studio_punch(80%) + warm_shift(30%) + sat_boost(50%) + black_crush(15%)
+- **Studio Ambient** — studio_punch(80%) + warm_shift(100%) + sat_boost(100%) + black_crush(20%) — for no-fill-light scenarios
+- **Studio Gold** — cinema_dark(80%) + golden_warm(75%) + sat_boost(100%) + black_crush(10%) — warm cinematic
+- **Studio Dance** — studio_punch(100%) + warm_shift(40%) + sat_boost(60%) + black_crush(25%)
+- **Studio Film** — film_contrast(60%) + warm_shift(20%) + sat_reduce(30%) + black_crush(40%)
 
 All LUTs support `--strength=N` (0.0-1.0) for intensity control.
 
 Apply in Resolve: add node after conversion LUT → right-click → LUT → browse to .cube file.
 Apply in Premiere: Lumetri Color → Creative → Look dropdown → browse.
+
+### Option E: Match Grade Analysis
+
+`match_grade.py` compares a reference image against an output image and suggests preset adjustments to bring the output closer to the reference. Useful for matching grades across clips or iterating toward a target look.
+
+```bash
+python3 match_grade.py <reference.png> <output.png>
+```
 
 ## Scripting Setup (Windows)
 
@@ -192,7 +215,7 @@ When fixing a specific clip, follow this workflow to diagnose and build a correc
    ffmpeg -y -i raw_frame.png -vf "lut3d='conversion.cube',lut3d='correction.cube'" result.png
    ```
 
-6. **Iterate** by comparing before/after color stats until skin tones are in the H=10-35° range and neutral areas are desaturated.
+6. **Iterate** by comparing before/after color stats until skin tones are in the H=10-35° range and neutral areas are desaturated. Use `match_grade.py` to compare against a reference frame and get specific adjustment suggestions.
 
 ### Key Lesson: Purple vs Warm Cast Correction
 

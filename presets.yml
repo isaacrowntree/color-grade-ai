@@ -261,6 +261,19 @@ film_contrast:
       crush_gamma: 2.00
       transition_end: 0.20
 
+cinema_dark:
+  title: "Cinema Dark - Deep Moody Contrast"
+  comments:
+    - "Strong gamma pull + highlight rolloff for dark cinematic look"
+    - "Much darker than film_contrast — use for moody/dramatic scenes"
+  pipeline:
+    - step: exposure
+      gamma: 1.45
+      shadow_lift: 0.02
+    - step: highlight_protect
+      knee_start: 0.72
+      knee_ceiling: 0.90
+
 flat_lift:
   title: "Flat Lift - Softer Shadows"
   comments:
@@ -282,6 +295,19 @@ warm_shift:
       g_gain: 1.00
       b_gain: 0.95
       gain_ramp: 0.05
+
+golden_warm:
+  title: "Golden Warm - Strong Golden Tone"
+  comments:
+    - "Strong warm/golden shift for a golden-hour look"
+    - "g_gain stays at 1.0 to avoid green cast"
+    - "Higher gain_ramp protects highlights from pink cast"
+  pipeline:
+    - step: rgb_rebalance
+      r_gain: 1.20
+      g_gain: 1.00
+      b_gain: 0.80
+      gain_ramp: 0.12
 
 cool_shift:
   title: "Cool Shift - Add Coolness"

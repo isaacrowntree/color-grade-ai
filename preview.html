@@ -45,7 +45,7 @@
 
 <script type="module">
 import { h, render } from 'https://esm.sh/preact@10.25.4';
-import { useState, useRef, useCallback } from 'https://esm.sh/preact@10.25.4/hooks';
+import { useState, useRef, useCallback, useEffect } from 'https://esm.sh/preact@10.25.4/hooks';
 import htm from 'https://esm.sh/htm@3.1.1';
 
 const html = htm.bind(h);
@@ -169,11 +169,13 @@ const NODE_DEFS = [
     { value: 'none', label: '— None —' },
     { value: 'studio_punch', label: 'Studio Punch (subtle)' },
     { value: 'film_contrast', label: 'Film Contrast (stronger)' },
+    { value: 'cinema_dark', label: 'Cinema Dark (deep moody)' },
     { value: 'flat_lift', label: 'Flat Lift (softer shadows)' },
   ]},
   { id: 3, title: 'Color Temperature', options: [
     { value: 'none', label: '— None —' },
     { value: 'warm_shift', label: 'Warm Shift' },
+    { value: 'golden_warm', label: 'Golden Warm (strong)' },
     { value: 'cool_shift', label: 'Cool Shift' },
     { value: 'led_green_fix', label: 'LED Green Fix' },
   ]},
@@ -224,6 +226,19 @@ const CREATIVE_PRESETS = {
       { id: 6, enabled: true, value: 'black_crush', strength: 15 },
     ],
   },
+  'studio_ambient': {
+    label: 'Studio Ambient (no fill light)',
+    desc: 'Like Balanced but more warmth + saturation to compensate for missing camera fill light.',
+    conv: null,
+    cine: false,
+    nodes: [
+      { id: 2, enabled: true, value: 'studio_punch', strength: 80 },
+      { id: 3, enabled: true, value: 'warm_shift', strength: 100 },
+      { id: 4, enabled: true, value: 'none', strength: 100 },
+      { id: 5, enabled: true, value: 'sat_boost', strength: 100 },
+      { id: 6, enabled: true, value: 'black_crush', strength: 20 },
+    ],
+  },
   'studio_dance': {
     label: 'Studio Dance (warm cinematic)',
     desc: 'Warmer tone + more saturation + moderate crush. Cinematic with shadow detail.',
@@ -235,6 +250,19 @@ const CREATIVE_PRESETS = {
       { id: 4, enabled: true, value: 'none', strength: 100 },
       { id: 5, enabled: true, value: 'sat_boost', strength: 60 },
       { id: 6, enabled: true, value: 'black_crush', strength: 25 },
+    ],
+  },
+  'studio_gold': {
+    label: 'Studio Gold (warm cinematic)',
+    desc: 'Deep moody contrast + golden warmth + rich saturation. Cinematic studio look.',
+    conv: null,
+    cine: false,
+    nodes: [
+      { id: 2, enabled: true, value: 'cinema_dark', strength: 80 },
+      { id: 3, enabled: true, value: 'golden_warm', strength: 75 },
+      { id: 4, enabled: true, value: 'none', strength: 100 },
+      { id: 5, enabled: true, value: 'sat_boost', strength: 100 },
+      { id: 6, enabled: true, value: 'black_crush', strength: 10 },
     ],
   },
   'studio_film': {
@@ -394,6 +422,40 @@ function App() {
       setTimeout(scheduleRender);
     }
   }, [scheduleRender]);
+
+  // URL params: ?image=c1640_raw.png&preset=studio_gold&lut=Slog3...cube
+  // Apply LUT and preset only after image is loaded
+  const initDone = useRef(false);
+  useEffect(() => {
+    if (!imageLoaded || initDone.current) return;
+    initDone.current = true;
+    const params = new URLSearchParams(location.search);
+    const preset = params.get('preset');
+    const lut = params.get('lut');
+    if (lut) {
+      fetch(lut)
+        .then(r => r.blob())
+        .then(blob => {
+          const file = new File([blob], lut);
+          setConvFiles([file]);
+          setConvValue(file);
+          setConvLabel(file.name);
+          if (preset && CREATIVE_PRESETS[preset]) {
+            setTimeout(() => applyCreativePreset(preset), 200);
+          } else {
+            setTimeout(scheduleRender, 100);
+          }
+        });
+    } else if (preset && CREATIVE_PRESETS[preset]) {
+      applyCreativePreset(preset);
+    }
+  }, [imageLoaded]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const img = params.get('image');
+    if (img) loadImage(img, img);
+  }, []);
 
   const resetAll = () => {
     setConvEnabled(true);
