@@ -6,7 +6,8 @@
 #
 # Run: ruby test_repo_hygiene.rb
 
-require 'json'
+require "json"
+require "yaml"
 
 ROOT = __dir__
 
@@ -158,6 +159,25 @@ assert "a CI workflow runs test_repo_hygiene.rb",
        all_workflow_text.include?('test_repo_hygiene.rb')
 assert "a CI workflow runs test_color_model.rb",
        all_workflow_text.include?('test_color_model.rb')
+
+%w[test_lut_apply.py test_eval.py test_sample_clip.py test_pipeline.mjs].each do |suite|
+  assert "a CI workflow runs #{suite}", all_workflow_text.include?(suite)
+end
+
+# ── Test 5c: Generated data stays in sync ─────────────────────────────
+
+section "Generated Exports"
+
+presets_json = File.join(ROOT, 'presets.json')
+assert "presets.json exists for the browser", File.exist?(presets_json)
+
+if File.exist?(presets_json)
+  exported = JSON.parse(File.read(presets_json))
+  source = YAML.load_file(File.join(ROOT, 'presets.yml'))
+
+  assert "presets.json matches presets.yml", exported == source,
+         "run `ruby export_presets.rb` — the export has drifted"
+end
 
 # ── Test 5b: Version and baselines ────────────────────────────────────
 

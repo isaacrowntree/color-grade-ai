@@ -268,5 +268,108 @@ class TestExposureAnalysis(unittest.TestCase):
         self.assertLess(node['gamma_recommendation'], 1.0)
 
 
+class TestSkinDetectorIsShared(unittest.TestCase):
+    """Node 4 must use the YCbCr locus detector, not its own HSV box.
+
+    Two detectors would mean the reported skin hue and the fitted skin
+    correction could disagree about which pixels are skin.
+    """
+
+    @staticmethod
+    def patch(rgb):
+        return (np.tile(np.array(rgb), (96, 96, 1)) * 255).astype('uint8')
+
+    def analyze_patch(self, rgb):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, 'p.png')
+            Image.fromarray(self.patch(rgb)).save(path)
+            return auto_grade.analyze_frame(path)
+
+    def test_wood_is_not_reported_as_skin(self):
+        node = self.analyze_patch((0.55, 0.34, 0.16))['node4_skin']
+        self.assertLess(node['skin_pixels_pct'], 50.0,
+                        'varnished wood classified as skin')
+
+    def test_amber_practical_is_not_reported_as_skin(self):
+        node = self.analyze_patch((0.85, 0.62, 0.10))['node4_skin']
+        self.assertLess(node['skin_pixels_pct'], 50.0)
+
+    def test_real_skin_is_reported(self):
+        node = self.analyze_patch((0.72, 0.53, 0.43))['node4_skin']
+        self.assertGreater(node['skin_pixels_pct'], 50.0)
+
+    def test_khaki_is_not_reported_as_skin(self):
+        """Khaki sits inside the old HSV box (H=49, S=0.38, V=0.45) but well
+        off the YCbCr skin locus, so it only passes with the shared detector."""
+        node = self.analyze_patch((0.45, 0.42, 0.28))['node4_skin']
+        self.assertLess(node['skin_pixels_pct'], 50.0,
+                        'khaki classified as skin')
+
+    def test_agrees_with_grade_metrics(self):
+        import grade_metrics
+        for rgb in [(0.72, 0.53, 0.43), (0.55, 0.34, 0.16), (0.36, 0.24, 0.18),
+                    (0.45, 0.42, 0.28), (0.86, 0.68, 0.58)]:
+            with self.subTest(rgb=rgb):
+                arr = self.patch(rgb)
+                reported = self.analyze_patch(rgb)['node4_skin']['skin_pixels_pct']
+                shared = grade_metrics.skin_confidence(arr) * 100
+                self.assertAlmostEqual(reported, shared, delta=1.0)
+
+
+class TestEmitIntegration(unittest.TestCase):
+    """`--emit` must close the loop: frame in, working LUT out."""
+
+    def setUp(self):
+        import eval_scenes
+        self.base, self.degraded = eval_scenes.build('warm_and_dark')
+
+    def test_emit_writes_a_lut_that_improves_the_frame(self):
+        import grade_metrics
+        from lut_apply import CubeLUT
+
+        with tempfile.TemporaryDirectory() as tmp:
+            frame = os.path.join(tmp, 'frame.png')
+            out = os.path.join(tmp, 'fix.cube')
+            Image.fromarray(
+                (self.degraded * 255).astype('uint8')).save(frame)
+
+            rc = auto_grade.main([frame, '--emit', out])
+            self.assertEqual(rc, 0)
+            self.assertTrue(os.path.exists(out))
+
+            graded = CubeLUT.load(out).apply(self.degraded)
+
+        before = grade_metrics.total_error(self.degraded)
+        after = grade_metrics.total_error(graded)
+        self.assertLess(after, before * 0.6,
+                        f'emitted LUT barely helped: {before:.3f} -> {after:.3f}')
+
+    def test_emitted_lut_is_a_valid_cube(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            frame = os.path.join(tmp, 'frame.png')
+            out = os.path.join(tmp, 'fix.cube')
+            Image.fromarray((self.degraded * 255).astype('uint8')).save(frame)
+            auto_grade.main([frame, '--emit', out])
+
+            with open(out) as f:
+                content = f.read()
+
+        self.assertIn('LUT_3D_SIZE', content)
+        data_lines = [l for l in content.splitlines() if l[:1].isdigit()]
+        self.assertEqual(len(data_lines), 33 ** 3)
+
+    def test_analysis_still_prints_without_emit(self):
+        import contextlib
+        import io
+        with tempfile.TemporaryDirectory() as tmp:
+            frame = os.path.join(tmp, 'frame.png')
+            Image.fromarray((self.degraded * 255).astype('uint8')).save(frame)
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                rc = auto_grade.main([frame])
+        self.assertEqual(rc, 0)
+        self.assertIn('WHITE BALANCE', buf.getvalue())
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

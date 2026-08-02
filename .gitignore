@@ -22,3 +22,6 @@ luts/
 *_analysis.json
 
 # Generated correction LUTs are committed to correction_luts/
+
+# Solver LUT cache
+tmp/lut_cache/

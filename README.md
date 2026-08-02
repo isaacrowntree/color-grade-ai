@@ -13,6 +13,12 @@ Built as a [Claude Code](https://claude.ai/claude-code) skill — Claude analyze
 Feed it a video frame. It tells you what's wrong and generates a .cube LUT to fix it.
 
 ```bash
+# Frame in, fitted correction LUT out
+python3 auto_grade.py frame_709.png --emit fix.cube
+
+# Fit against a whole clip rather than one arbitrary frame
+python3 sample_clip.py clip.mov --emit fix.cube
+
 # Auto-analyze a frame and get per-node recommendations
 python3 auto_grade.py frame_709.png
 
@@ -110,14 +116,22 @@ generator to reproduce v1 output exactly.
 
 ## Development
 
-Four suites, no test framework to install:
+Seven suites, no test framework to install:
 
 ```bash
-ruby test_luts.rb          # preset pipelines, .cube output, golden-file regression
-ruby test_color_model.rb   # linear-light tone model, chromaticity, legacy parity
-ruby test_repo_hygiene.rb  # line endings, exec bits, skill/plugin manifests, CI wiring
-python3 test_auto_grade.py # frame analysis: white balance, skin, exposure
+ruby test_luts.rb            # preset pipelines, .cube output, golden-file regression
+ruby test_color_model.rb     # linear-light tone model, chromaticity, legacy parity
+ruby test_repo_hygiene.rb    # line endings, exec bits, manifests, CI wiring
+python3 test_auto_grade.py   # frame analysis: white balance, skin, exposure
+python3 test_lut_apply.py    # Python .cube engine, parity with the Ruby pipeline
+python3 test_eval.py         # closed-loop grading against known defects
+python3 test_sample_clip.py  # clip sampling, aggregation, scene-change detection
+node --test test_pipeline.mjs  # browser pipeline parity with every shipped LUT
 ```
+
+`test_eval.py` is the one that makes "the grader got better" measurable: it
+applies known defects to a synthetic scene, grades them, and asserts how much of
+each defect actually went away.
 
 The shipped LUTs in `correction_luts/` are reproducible artifacts, generated from
 `correction_luts/manifest.yml`:

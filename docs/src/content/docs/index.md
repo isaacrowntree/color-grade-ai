@@ -215,6 +215,71 @@ Professional serial node chain:
 ffmpeg -i input.mp4 -vf "lut3d='conversion.cube':interp=tetrahedral,lut3d='correction.cube':interp=tetrahedral" output.mp4
 ```
 
+## Closed-Loop Grading
+
+Rather than reporting recommendations for you to transcribe, the tool can fit a
+correction by measurement and hand you the LUT:
+
+```bash
+# Frame in, correction LUT out
+python3 auto_grade.py frame.png --emit fix.cube
+
+# Same thing without the analysis report
+python3 solve_grade.py frame.png --emit fix.cube
+
+# Fit against a whole clip instead of one arbitrary frame
+python3 sample_clip.py clip.mov --emit fix.cube --frames 12
+```
+
+**How the strengths are chosen.** The solver applies a candidate correction,
+re-measures the frame, and keeps the value that actually minimises the
+remaining error. Earlier versions guessed with hand-tuned constants
+(`deviation * 10`), which had no feedback at all.
+
+**Corrections are synthesised, not just selected.** The preset library is
+deliberately gentle — `cool_shift` is a 4% channel shift at full strength — so
+no combination of library presets can neutralise a 22% tungsten cast. For white
+balance, exposure and black level the solver fits the parameters directly from
+the measurement. Skin correction still uses the tuned `red_skin_fix` preset,
+because that is a shape correction rather than a magnitude.
+
+**What it measures** (`grade_metrics.py`, reference-free — no pristine
+reference needed):
+
+| Measurement | Target |
+|---|---|
+| White balance | neutral illuminant, skin and saturated props excluded |
+| Exposure | median luminance 0.45 |
+| Black level | black point 0.02 |
+| Skin hue | 20 degrees |
+
+**Skin detection** uses the YCbCr skin locus rather than an HSV box. An HSV box
+that accepts skin also accepts wood, khaki and amber practicals — "warm and
+mid-bright" is not a description of skin. The locus tolerance is asymmetric:
+generous toward flushed and sunburnt skin, which is exactly what `red_skin_fix`
+exists to correct, and tight toward the wood and amber direction.
+
+**Clip analysis** samples across the clip, aggregates with the median so one
+blown frame cannot steer the grade, and warns when the clip varies too much to
+deserve a single LUT.
+
+Measured on the synthetic evaluation set (`eval_scenes.py`, nine known defects),
+closed-loop grading removes a mean of **79%** of the introduced error.
+
+## Interactive LUT Generation
+
+`preview.html` generates LUTs live in the browser from `presets.json` rather
+than fetching pre-baked files, and can export exactly what you are looking at
+via **Export .cube**.
+
+This also fixed a real defect: the preview used to interpolate the *result* of
+a full-strength LUT against the original, while the CLI interpolates the
+*parameters*. For `studio_punch` at 50% those diverge by up to a quarter of the
+range on saturated colours — greys agreed, which is why it went unnoticed.
+
+The browser port (`pipeline.mjs`) is verified against every shipped `.cube`
+file in CI, so it cannot silently drift from the Ruby reference.
+
 ## Tone Model (v2)
 
 Tone operations — `exposure`, `black_crush`, `highlight_protect`, `skin_rolloff`,

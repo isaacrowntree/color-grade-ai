@@ -35,11 +35,16 @@ Methodology:
         - Outputs crush threshold based on noise floor
 """
 
-import sys
+import argparse
 import json
 import math
-from PIL import Image
+import os
+import sys
+
 import numpy as np
+from PIL import Image
+
+import grade_metrics
 
 
 def rgb_to_hsv(r, g, b):
@@ -199,12 +204,11 @@ def analyze_frame(img_path):
     # ── Node 4: Skin Tone ──────────────────────────────────────────
     h, s, v = rgb_to_hsv(r, g, b)
 
-    # Skin mask: H=0-50 OR H>340 (wrapping red), S=0.10-0.70, V=0.20-0.90
-    skin_mask = (
-        ((h < 50) | (h > 340)) &
-        (s > 0.10) & (s < 0.70) &
-        (v > 0.20) & (v < 0.90)
-    )
+    # Skin detection lives in grade_metrics so the analyzer and the solver
+    # always agree about which pixels are skin. It uses the YCbCr skin locus
+    # rather than an HSV box, which also selects wood, khaki and amber
+    # practicals — "warm and mid-bright" is not a description of skin.
+    skin_mask = grade_metrics.skin_mask(arr)
     skin_pixel_count = np.sum(skin_mask)
     skin_pct = skin_pixel_count / lum_flat.size * 100
 
@@ -428,17 +432,41 @@ def print_report(results):
     print()
 
 
-if __name__ == '__main__':
-    if len(sys.argv) < 2:
-        print("Usage: python3 auto_grade.py <frame.png>")
-        print("  Analyzes a Rec.709 frame and recommends node corrections.")
-        sys.exit(1)
+def main(argv=None):
+    parser = argparse.ArgumentParser(
+        prog='auto_grade.py',
+        description='Analyze a Rec.709 frame and recommend node corrections.')
+    parser.add_argument('frame', help='frame to analyse (PNG/JPEG)')
+    parser.add_argument('--emit', metavar='OUT.cube',
+                        help='fit and write a correction LUT for this frame')
+    parser.add_argument('--size', type=int, default=33,
+                        help='emitted LUT grid size (default: 33)')
+    parser.add_argument('--no-json', action='store_true',
+                        help='skip writing the _analysis.json sidecar')
+    args = parser.parse_args(argv)
 
-    results = analyze_frame(sys.argv[1])
+    results = analyze_frame(args.frame)
     print_report(results)
 
-    # Also output JSON for programmatic use
-    json_path = sys.argv[1].rsplit('.', 1)[0] + '_analysis.json'
-    with open(json_path, 'w') as f:
-        json.dump(results, f, indent=2)
-    print(f"  JSON saved: {json_path}\n")
+    if not args.no_json:
+        json_path = args.frame.rsplit('.', 1)[0] + '_analysis.json'
+        with open(json_path, 'w') as f:
+            json.dump(results, f, indent=2)
+        print(f"  JSON saved: {json_path}\n")
+
+    if args.emit:
+        # Closing the loop: rather than leave the user to transcribe the
+        # recommendations, fit the correction by measurement and bake it.
+        import solve_grade
+
+        image = np.array(Image.open(args.frame).convert('RGB'))
+        plan = solve_grade.solve(image)
+        solve_grade.report(image, plan, os.path.basename(args.frame))
+        plan.write_cube(args.emit, size=args.size)
+        print(f"\n  Wrote {args.emit}\n")
+
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())
