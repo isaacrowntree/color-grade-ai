@@ -8,7 +8,17 @@ tmp/
 *.zip
 *.pdf
 
-# Paid/licensed conversion LUTs (not redistributable)
+__pycache__/
+*.pyc
+
+# Paid/licensed conversion LUTs (not redistributable).
+# Root-level .cube files are working scratch — the shipped ones live in
+# correction_luts/ and are committed deliberately.
 luts/
+/*.cube
+
+# Frames extracted from footage while grading
+*_raw.png
+*_analysis.json
 
 # Generated correction LUTs are committed to correction_luts/

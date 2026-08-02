@@ -79,6 +79,9 @@ git clone https://github.com/isaacrowntree/color-grade-ai.git .claude/skills/col
 git clone https://github.com/isaacrowntree/color-grade-ai.git ~/.claude/skills/color-grade
 ```
 
+The repo also ships a plugin manifest at [`.claude-plugin/plugin.json`](.claude-plugin/plugin.json),
+so it can be installed as a Claude Code plugin rather than cloned by hand.
+
 Then just talk to Claude:
 
 ```
@@ -87,9 +90,35 @@ Then just talk to Claude:
 > /color-grade red_skin_fix output.cube
 ```
 
+## Just want the LUTs?
+
+You don't need Ruby or Python. Every correction LUT is pre-baked in
+[`correction_luts/`](correction_luts) — download the `.cube` file you need and drop it
+straight into Resolve or Premiere.
+
 ## Documentation
 
 The [docs site](https://isaacrowntree.github.io/color-grade-ai) is auto-generated from [SKILL.md](SKILL.md). To rebuild: `ruby generate_docs.rb && cd docs && npm run build`
+
+## Development
+
+Three suites, no test framework to install:
+
+```bash
+ruby test_luts.rb          # preset pipelines, .cube output, golden-file regression
+ruby test_repo_hygiene.rb  # line endings, exec bits, skill/plugin manifests, CI wiring
+python3 test_auto_grade.py # frame analysis: white balance, skin, exposure
+```
+
+All three run in CI on every push and pull request.
+
+`test_luts.rb` checksums every generated LUT against `reference_checksums.yml`, so any
+change to the colour maths shows up as a failing test. If a change is intentional,
+regenerate the baseline and review the diff:
+
+```bash
+ruby test_luts.rb --generate-reference
+```
 
 ## Related Projects
 

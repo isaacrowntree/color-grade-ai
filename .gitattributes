@@ -1,0 +1,19 @@
+# Normalise line endings so scripts stay runnable on every platform.
+# A CRLF shebang makes Ruby and Python warn (or fail) at startup.
+* text=auto eol=lf
+
+*.rb   text eol=lf
+*.py   text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+*.md   text eol=lf
+*.html text eol=lf
+*.json text eol=lf
+*.cube text eol=lf
+
+*.png binary
+*.jpg binary
+*.zip binary
+
+# Generated LUTs are large and uninteresting in diffs.
+correction_luts/*.cube linguist-generated=true -diff

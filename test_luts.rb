@@ -4,10 +4,18 @@
 # Validates that presets.yml + generate_lut.rb produce correct output.
 # Run: ruby test_luts.rb
 
+require 'fileutils'
 require_relative 'generate_lut'
 
-REFERENCE_DIR = File.join(__dir__, 'tmp', 'reference')
 OUTPUT_DIR = File.join(__dir__, 'tmp', 'test_output')
+
+# Golden-file regression baseline. Storing a SHA256 per preset rather than the
+# .cube files themselves keeps the baseline at a few KB instead of 25 MB while
+# still catching any unintended change to the colour maths.
+#
+# Regenerate deliberately (and review the diff) with:
+#   ruby test_luts.rb --generate-reference
+REFERENCE_PATH = File.join(__dir__, 'reference_checksums.yml')
 
 $pass = 0
 $fail = 0
@@ -76,7 +84,9 @@ end
 
 section "LUT Generation"
 
-Dir.mkdir(OUTPUT_DIR) unless Dir.exist?(OUTPUT_DIR)
+# mkdir_p, not mkdir: tmp/ is gitignored, so on a fresh clone the parent
+# directory does not exist and a non-recursive mkdir aborts the whole suite.
+FileUtils.mkdir_p(OUTPUT_DIR)
 
 expected_lines = 33 * 33 * 33  # 35,937
 
@@ -163,52 +173,52 @@ end
 
 section "Regression vs Reference"
 
-if Dir.exist?(REFERENCE_DIR)
-  presets&.each_key do |name|
-    ref_path = File.join(REFERENCE_DIR, "#{name}.cube")
-    new_path = File.join(OUTPUT_DIR, "#{name}.cube")
+# Checksum the numeric data lines only, so a title or comment edit does not
+# read as a colour-maths regression.
+def lut_digest(path)
+  require 'digest'
+  data = File.readlines(path).select { |l| l =~ /^\d/ }.join
+  Digest::SHA256.hexdigest(data)
+end
 
-    unless File.exist?(ref_path)
-      assert "#{name} reference file exists", false, "missing #{ref_path}"
-      next
-    end
+if ARGV.include?('--generate-reference')
+  baseline = {}
+  presets&.each_key do |name|
+    path = File.join(OUTPUT_DIR, "#{name}.cube")
+    baseline[name] = lut_digest(path) if File.exist?(path)
+  end
+  File.write(REFERENCE_PATH, baseline.to_yaml)
+  puts "  Wrote #{baseline.length} checksums to #{REFERENCE_PATH}"
+  puts "  Review the diff before committing."
+elsif File.exist?(REFERENCE_PATH)
+  reference = YAML.load_file(REFERENCE_PATH)
+
+  assert "reference baseline covers every preset",
+         (presets.keys - reference.keys).empty?,
+         "missing baseline for: #{(presets.keys - reference.keys).join(', ')}"
+
+  assert "reference baseline has no stale entries",
+         (reference.keys - presets.keys).empty?,
+         "baseline references removed presets: #{(reference.keys - presets.keys).join(', ')}"
+
+  presets&.each_key do |name|
+    new_path = File.join(OUTPUT_DIR, "#{name}.cube")
+    expected = reference[name]
+
     unless File.exist?(new_path)
       assert "#{name} test output exists", false, "missing #{new_path}"
       next
     end
+    next unless expected
 
-    ref_data = File.readlines(ref_path).select { |l| l =~ /^\d/ }
-    new_data = File.readlines(new_path).select { |l| l =~ /^\d/ }
-
-    if ref_data.length != new_data.length
-      assert "#{name} line count matches reference", false,
-             "ref=#{ref_data.length} new=#{new_data.length}"
-      next
-    end
-
-    max_diff = 0.0
-    diff_count = 0
-
-    ref_data.zip(new_data).each do |ref_line, new_line|
-      ref_vals = ref_line.split.map(&:to_f)
-      new_vals = new_line.split.map(&:to_f)
-
-      ref_vals.zip(new_vals).each do |rv, nv|
-        d = (rv - nv).abs
-        if d > 1e-6
-          diff_count += 1
-          max_diff = d if d > max_diff
-        end
-      end
-    end
-
-    assert "#{name} matches reference (max_diff=#{format('%.2e', max_diff)}, diffs=#{diff_count})",
-           diff_count == 0,
-           "#{diff_count} values differ, max_diff=#{format('%.2e', max_diff)}"
+    actual = lut_digest(new_path)
+    assert "#{name} output matches reference checksum", actual == expected,
+           "expected #{expected[0, 12]}… got #{actual[0, 12]}… " \
+           "(run `ruby test_luts.rb --generate-reference` if intentional)"
   end
 else
-  puts "  SKIP: No reference directory at #{REFERENCE_DIR}"
-  puts "  Generate references first: ruby test_luts.rb --generate-reference"
+  assert "reference checksum baseline exists", false,
+         "missing #{REFERENCE_PATH} — run `ruby test_luts.rb --generate-reference`"
 end
 
 # ── Test 6: Value range ──────────────────────────────────────────────
@@ -244,11 +254,33 @@ if File.exist?(docs_script)
   success = $?.success?
   assert "generate_docs.rb runs without error", success, result.lines.last&.strip
 
-  lut_types_md = File.join(__dir__, 'docs', 'src', 'content', 'docs', 'reference', 'lut-types.md')
-  presets_md = File.join(__dir__, 'docs', 'src', 'content', 'docs', 'reference', 'presets-config.md')
+  # The docs site is a single page generated from SKILL.md (see commit e8a4dc0).
+  index_md = File.join(__dir__, 'docs', 'src', 'content', 'docs', 'index.md')
+  assert "docs index.md generated", File.exist?(index_md)
 
-  assert "lut-types.md generated", File.exist?(lut_types_md)
-  assert "presets-config.md generated", File.exist?(presets_md)
+  if File.exist?(index_md)
+    generated = File.read(index_md)
+
+    assert "index.md has Starlight frontmatter",
+           generated.start_with?("---\n") && generated.match?(/^title:\s*\S/)
+
+    # Skill-only frontmatter keys must not leak into the published site.
+    header = generated.split("---\n")[1].to_s
+    assert "index.md strips skill frontmatter",
+           !header.include?('allowed-tools') && !header.include?('argument-hint'),
+           "skill frontmatter leaked into docs"
+
+    # The page must actually carry the SKILL.md body, not just a header.
+    skill_body = File.read(File.join(__dir__, 'SKILL.md')).split("---\n", 3).last.to_s
+    first_heading = skill_body[/^#\s+.+$/]
+    assert "index.md carries the SKILL.md body",
+           first_heading && generated.include?(first_heading),
+           "expected #{first_heading.inspect} in generated page"
+
+    assert "index.md is not truncated",
+           generated.length > skill_body.length * 0.9,
+           "generated #{generated.length} chars from #{skill_body.length} chars of source"
+  end
 else
   puts "  SKIP: generate_docs.rb not found"
 end

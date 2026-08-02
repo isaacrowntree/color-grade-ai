@@ -1,0 +1,40 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  ruby:
+    name: LUT generation (Ruby)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.2'
+
+      - name: LUT generation suite
+        run: ruby test_luts.rb
+
+      - name: Repository hygiene suite
+        run: ruby test_repo_hygiene.rb
+
+  python:
+    name: Frame analysis (Python)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install Pillow numpy
+
+      - name: Auto-grade suite
+        run: python3 test_auto_grade.py

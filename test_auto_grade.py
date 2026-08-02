@@ -1,0 +1,272 @@
+#!/usr/bin/env python3
+"""test_auto_grade.py — Test suite for auto_grade.py frame analysis.
+
+Uses synthetic frames with known color casts to verify that the analyzer
+recommends the preset that moves the image *toward* neutral, not away.
+
+Run: python3 test_auto_grade.py
+"""
+
+import os
+import sys
+import tempfile
+import unittest
+
+import numpy as np
+from PIL import Image
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+import auto_grade
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+
+
+def synthetic_frame(r_gain=1.0, g_gain=1.0, b_gain=1.0, seed=0, size=(240, 320)):
+    """Build a frame with a known multiplicative cast over a neutral base."""
+    rng = np.random.default_rng(seed)
+    base = rng.uniform(0.15, 0.75, size)
+    img = np.stack([
+        np.clip(base * r_gain, 0, 1),
+        np.clip(base * g_gain, 0, 1),
+        np.clip(base * b_gain, 0, 1),
+    ], axis=-1)
+    return (img * 255).astype('uint8')
+
+
+def analyze_synthetic(**kwargs):
+    """Write a synthetic frame to disk and run the full analyzer on it."""
+    arr = synthetic_frame(**kwargs)
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, 'frame.png')
+        Image.fromarray(arr).save(path)
+        return auto_grade.analyze_frame(path)
+
+
+# Casts the analyzer must recognise. Each is defined by what is *wrong* with
+# the scene; the expected preset is the one that corrects it.
+WARM_SCENE = dict(r_gain=1.25, b_gain=0.72)     # red-heavy, blue-poor
+COOL_SCENE = dict(r_gain=0.75, b_gain=1.25)     # blue-heavy, red-poor
+GREEN_SCENE = dict(g_gain=1.20)                 # green-heavy (cheap LED)
+MAGENTA_SCENE = dict(r_gain=1.12, b_gain=1.12)  # green-poor (pink stage light)
+NEUTRAL_SCENE = dict()
+
+
+class TestWhiteBalanceDirection(unittest.TestCase):
+    """Node 3 must recommend the preset that neutralises the cast."""
+
+    def test_warm_scene_recommends_cool_shift(self):
+        wb = analyze_synthetic(**WARM_SCENE)['node3_white_balance']
+        self.assertEqual(wb['preset_recommendation'], 'cool_shift')
+
+    def test_cool_scene_recommends_warm_shift(self):
+        wb = analyze_synthetic(**COOL_SCENE)['node3_white_balance']
+        self.assertEqual(wb['preset_recommendation'], 'warm_shift')
+
+    def test_green_scene_recommends_led_green_fix(self):
+        wb = analyze_synthetic(**GREEN_SCENE)['node3_white_balance']
+        self.assertEqual(wb['preset_recommendation'], 'led_green_fix')
+
+    def test_magenta_scene_does_not_recommend_led_green_fix(self):
+        """A magenta cast is the opposite of a green tint."""
+        wb = analyze_synthetic(**MAGENTA_SCENE)['node3_white_balance']
+        self.assertNotEqual(wb['preset_recommendation'], 'led_green_fix')
+
+    def test_magenta_scene_recommends_pink_cast_fix(self):
+        wb = analyze_synthetic(**MAGENTA_SCENE)['node3_white_balance']
+        self.assertEqual(wb['preset_recommendation'], 'pink_cast_fix')
+
+    def test_neutral_scene_recommends_nothing(self):
+        wb = analyze_synthetic(**NEUTRAL_SCENE)['node3_white_balance']
+        self.assertEqual(wb['preset_recommendation'], 'none')
+        self.assertEqual(wb['recommended_strength'], 0)
+
+    def test_gain_convention_is_corrective(self):
+        """gain < 1 means that channel is in excess and must be reduced."""
+        wb = analyze_synthetic(**WARM_SCENE)['node3_white_balance']
+        gains = wb['blended_gains']
+        self.assertLess(gains['r'], 1.0, "warm scene has excess red → r gain < 1")
+        self.assertGreater(gains['b'], 1.0, "warm scene lacks blue → b gain > 1")
+
+    def test_direction_text_agrees_with_preset(self):
+        """The human-readable direction must not contradict the preset."""
+        for label, scene, preset in [
+            ('warm', WARM_SCENE, 'cool_shift'),
+            ('cool', COOL_SCENE, 'warm_shift'),
+            ('green', GREEN_SCENE, 'led_green_fix'),
+            ('magenta', MAGENTA_SCENE, 'pink_cast_fix'),
+        ]:
+            with self.subTest(scene=label):
+                wb = analyze_synthetic(**scene)['node3_white_balance']
+                self.assertIn(preset, wb['direction'],
+                              f"direction {wb['direction']!r} should name {preset}")
+
+
+class TestSummaryContract(unittest.TestCase):
+    """The summary loop reads a fixed set of keys from every node."""
+
+    REQUIRED_KEYS = ('assessment', 'preset_recommendation', 'recommended_strength')
+    NODE_KEYS = ('node2_contrast', 'node3_white_balance', 'node4_skin',
+                 'node5_saturation', 'node6_black_level')
+
+    def test_every_node_exposes_the_summary_keys(self):
+        for scene in (WARM_SCENE, COOL_SCENE, GREEN_SCENE, NEUTRAL_SCENE):
+            results = analyze_synthetic(**scene)
+            for node in self.NODE_KEYS:
+                for key in self.REQUIRED_KEYS:
+                    with self.subTest(node=node, key=key):
+                        self.assertIn(key, results[node])
+
+    def test_analyze_does_not_crash_on_a_colour_cast(self):
+        """Regression: the summary loop used to KeyError on node3."""
+        for label, scene in [('warm', WARM_SCENE), ('cool', COOL_SCENE),
+                             ('green', GREEN_SCENE), ('magenta', MAGENTA_SCENE)]:
+            with self.subTest(scene=label):
+                results = analyze_synthetic(**scene)
+                self.assertIn('summary', results)
+
+    def test_cast_scene_produces_a_chain_entry(self):
+        results = analyze_synthetic(**WARM_SCENE)
+        nodes = [s['node'] for s in results['summary']['recommended_chain']]
+        self.assertIn('White Balance', nodes)
+
+    def test_print_report_renders_a_cast_scene(self):
+        """print_report indexes the same keys — it must not crash either."""
+        import contextlib
+        import io
+        results = analyze_synthetic(**WARM_SCENE)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            auto_grade.print_report(results)
+        self.assertIn('WHITE BALANCE', buf.getvalue())
+
+
+class TestRecommendationsResolve(unittest.TestCase):
+    """Every preset the analyzer can name must exist in presets.yml."""
+
+    @staticmethod
+    def preset_names():
+        path = os.path.join(HERE, 'presets.yml')
+        names = set()
+        with open(path, encoding='utf-8') as f:
+            for line in f:
+                if line[:1].isalpha() and line.rstrip('\r\n').endswith(':'):
+                    names.add(line.split(':')[0].strip())
+        return names
+
+    def test_presets_yml_parses(self):
+        self.assertGreater(len(self.preset_names()), 10)
+
+    def test_recommended_presets_exist(self):
+        available = self.preset_names()
+        for scene in (WARM_SCENE, COOL_SCENE, GREEN_SCENE, MAGENTA_SCENE,
+                      NEUTRAL_SCENE):
+            results = analyze_synthetic(**scene)
+            for node, data in results.items():
+                if node == 'summary':
+                    continue
+                preset = data['preset_recommendation']
+                if preset == 'none':
+                    continue
+                with self.subTest(node=node, preset=preset):
+                    self.assertIn(preset, available)
+
+
+class TestHsvConversion(unittest.TestCase):
+    """rgb_to_hsv underpins skin detection — verify against known values."""
+
+    def test_primaries(self):
+        cases = [
+            ((1.0, 0.0, 0.0), 0.0),
+            ((0.0, 1.0, 0.0), 120.0),
+            ((0.0, 0.0, 1.0), 240.0),
+            ((1.0, 1.0, 0.0), 60.0),
+            ((0.0, 1.0, 1.0), 180.0),
+            ((1.0, 0.0, 1.0), 300.0),
+        ]
+        for (rgb, expected_h) in cases:
+            with self.subTest(rgb=rgb):
+                r, g, b = (np.array([[v]]) for v in rgb)
+                h, s, v = auto_grade.rgb_to_hsv(r, g, b)
+                self.assertAlmostEqual(float(h[0, 0]), expected_h, places=4)
+                self.assertAlmostEqual(float(s[0, 0]), 1.0, places=4)
+
+    def test_grey_has_zero_saturation(self):
+        r = g = b = np.array([[0.5]])
+        h, s, v = auto_grade.rgb_to_hsv(r, g, b)
+        self.assertAlmostEqual(float(s[0, 0]), 0.0, places=6)
+        self.assertAlmostEqual(float(v[0, 0]), 0.5, places=6)
+
+    def test_hue_is_never_negative(self):
+        arr = synthetic_frame(r_gain=1.1, b_gain=0.9, seed=3) / 255.0
+        h, s, v = auto_grade.rgb_to_hsv(arr[:, :, 0], arr[:, :, 1], arr[:, :, 2])
+        self.assertGreaterEqual(float(h.min()), 0.0)
+        self.assertLess(float(h.max()), 360.0)
+
+
+class TestSkinAnalysis(unittest.TestCase):
+
+    @staticmethod
+    def skin_frame(hue_deg):
+        """A frame filled with a mid-tone patch at a given hue."""
+        import colorsys
+        r, g, b = colorsys.hsv_to_rgb(hue_deg / 360.0, 0.35, 0.6)
+        arr = np.zeros((240, 320, 3))
+        arr[:, :, 0], arr[:, :, 1], arr[:, :, 2] = r, g, b
+        # Add mild noise so percentile maths has a distribution to work with.
+        rng = np.random.default_rng(1)
+        arr = np.clip(arr + rng.normal(0, 0.02, arr.shape), 0, 1)
+        return (arr * 255).astype('uint8')
+
+    def analyze_skin(self, hue_deg):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, 'skin.png')
+            Image.fromarray(self.skin_frame(hue_deg)).save(path)
+            return auto_grade.analyze_frame(path)['node4_skin']
+
+    def test_red_skin_is_flagged(self):
+        node = self.analyze_skin(5)
+        self.assertEqual(node['preset_recommendation'], 'red_skin_fix')
+
+    def test_natural_skin_needs_no_fix(self):
+        node = self.analyze_skin(20)
+        self.assertEqual(node['preset_recommendation'], 'none')
+
+    def test_no_skin_pixels_is_handled(self):
+        """A pure blue frame has no skin — must not raise."""
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, 'blue.png')
+            Image.fromarray(synthetic_frame(r_gain=0.1, g_gain=0.1)).save(path)
+            node = auto_grade.analyze_frame(path)['node4_skin']
+        self.assertEqual(node['preset_recommendation'], 'none')
+        self.assertIn('assessment', node)
+
+
+class TestExposureAnalysis(unittest.TestCase):
+
+    def analyze_at(self, scale):
+        rng = np.random.default_rng(7)
+        base = np.clip(rng.uniform(0.1, 0.9, (240, 320)) * scale, 0, 1)
+        arr = (np.stack([base] * 3, axis=-1) * 255).astype('uint8')
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, 'exp.png')
+            Image.fromarray(arr).save(path)
+            return auto_grade.analyze_frame(path)['node2_contrast']
+
+    def test_dark_frame_reads_as_underexposed(self):
+        node = self.analyze_at(0.35)
+        self.assertEqual(node['assessment'], 'underexposed')
+        self.assertEqual(node['preset_recommendation'], 'underexposure_fix')
+
+    def test_bright_frame_reads_as_overexposed(self):
+        node = self.analyze_at(1.6)
+        self.assertIn(node['assessment'], ('slightly bright', 'overexposed'))
+
+    def test_gamma_below_one_brightens(self):
+        """gamma is applied as out = in**gamma, so a dark frame needs < 1."""
+        node = self.analyze_at(0.35)
+        self.assertLess(node['gamma_recommendation'], 1.0)
+
+
+if __name__ == '__main__':
+    unittest.main(verbosity=2)

@@ -154,16 +154,28 @@ def analyze_frame(img_path):
     gain_r = 0.6 * gain_r_sg + 0.4 * gain_r_wp
     gain_b = 0.6 * gain_b_sg + 0.4 * gain_b_wp
 
-    # Estimate color temperature direction
-    if gain_r > 1.02 and gain_b < 0.98:
-        wb_direction = 'cool (scene is too warm → cool_shift)'
-        preset = 'cool_shift'
-    elif gain_b > 1.02 and gain_r < 0.98:
-        wb_direction = 'warm (scene is too cool → warm_shift)'
-        preset = 'warm_shift'
-    elif gain_r < 0.98 and gain_b < 0.98:
-        wb_direction = 'green tint detected → led_green_fix'
+    # Estimate color temperature direction.
+    #
+    # Gains are corrective: gain_c = norm_g / norm_c, so gain < 1.0 means that
+    # channel is in EXCESS and must be pulled down, and gain > 1.0 means it is
+    # DEFICIENT and must be pushed up. The recommended preset is therefore the
+    # one that moves the scene toward neutral, i.e. the opposite of the cast.
+    if gain_r > 1.02 and gain_b > 1.02:
+        # Both red and blue need lifting → green is in excess.
+        wb_direction = 'green tint (cheap LED/fluorescent) → led_green_fix'
         preset = 'led_green_fix'
+    elif gain_r < 0.98 and gain_b < 0.98:
+        # Both red and blue in excess → green is deficient: magenta/pink cast.
+        wb_direction = 'magenta/pink cast → pink_cast_fix'
+        preset = 'pink_cast_fix'
+    elif gain_r < 0.98 and gain_b > 1.02:
+        # Red in excess, blue deficient → scene is too warm, cool it down.
+        wb_direction = 'scene is too warm → cool_shift'
+        preset = 'cool_shift'
+    elif gain_b < 0.98 and gain_r > 1.02:
+        # Blue in excess, red deficient → scene is too cool, warm it up.
+        wb_direction = 'scene is too cool → warm_shift'
+        preset = 'warm_shift'
     else:
         wb_direction = 'neutral (no correction needed)'
         preset = 'none'
@@ -176,6 +188,9 @@ def analyze_frame(img_path):
         'white_patch_gains': {'r': round(gain_r_wp, 4), 'g': 1.0, 'b': round(gain_b_wp, 4)},
         'blended_gains': {'r': round(gain_r, 4), 'g': 1.0, 'b': round(gain_b, 4)},
         'deviation_from_neutral': round(wb_deviation, 4),
+        # 'assessment' is the key every node exposes for the summary loop;
+        # 'direction' is kept as an alias for backward compatibility.
+        'assessment': wb_direction,
         'direction': wb_direction,
         'preset_recommendation': preset,
         'recommended_strength': round(min(wb_deviation * 10, 1.0), 2),

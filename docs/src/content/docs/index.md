@@ -19,6 +19,9 @@ ruby generate_chain_lut.rb <output_path> <preset@strength> ...
 # Auto-analyze a frame and get node recommendations
 python3 auto_grade.py <frame.png>
 
+# Compare reference vs output and get adjustment suggestions
+python3 match_grade.py <reference.png> <output.png>
+
 # Analyze specific regions for color stats
 ruby analyze_frame.rb <image_path> <x1,y1,x2,y2> [label]
 
@@ -46,6 +49,16 @@ ffmpeg -y -i frame_raw.png -vf "lut3d='conversion.cube':interp=tetrahedral" -upd
 python3 auto_grade.py frame_709.png
 ```
 
+## Match Grade Analysis
+
+`match_grade.py` compares a reference image against an output image and suggests preset adjustments to bring the output closer to the reference.
+
+```bash
+python3 match_grade.py <reference.png> <output.png>
+```
+
+Useful for matching grades across clips or iterating toward a target look.
+
 ## Interactive Preview (preview.html)
 
 Browser-based node chain previewer using Preact + HTM (~4KB). Applies .cube LUTs on canvas in real-time.
@@ -54,9 +67,10 @@ Features:
 - **Drag-and-drop** any frame (raw S-Log3 or converted)
 - **Node 1: Conversion LUT** — add your own .cube files (not included in repo)
 - **Nodes 2-6: Correction chain** — dropdown presets + strength sliders
-- **Creative presets** — one-click curated looks (Studio Dance, Studio Clean, Studio Film)
+- **Creative presets** — one-click curated looks (Studio Dance, Studio Clean, Studio Ambient, Studio Gold, Studio Film)
 - **S-Gamut3 → Cine compensation** toggle for gamut mismatch
 - **Bypass/reset** all nodes instantly
+- **URL parameters** — deep-link to a specific state: `?image=frame.png&lut=path/to.cube&preset=studio_gold`
 
 Correction LUTs are committed in `correction_luts/`. Conversion LUTs are user-provided (gitignored in `luts/`).
 
@@ -80,6 +94,8 @@ Available step types: `exposure`, `highlight_protect`, `black_crush`, `hue_desat
 | `underexposure_fix` | Scene-wide ~1.2 stop lift with shadow recovery. |
 | `black_crush` | Crushes milky/lifted blacks below 12% to true black. |
 | `skin_highlight_fix` | Subtle skin-only highlight rolloff above 70% luminance. |
+| `golden_warm` | Strong golden warm shift via RGB rebalance (R:1.20, G:1.00, B:0.80). For rich warm cinematic looks. |
+| `cinema_dark` | Deep moody contrast with gamma 1.45, shadow lift 0.02, and knee compression (0.72-0.90). |
 
 ### Node Chain Building Blocks
 | Type | Node | What it does |
@@ -91,8 +107,10 @@ Available step types: `exposure`, `highlight_protect`, `black_crush`, `hue_desat
 | `cool_shift` | Temperature | Subtle cool shift via RGB rebalance |
 | `led_green_fix` | Temperature | Fixes green tint from LED/fluorescent lights |
 | `sat_boost` | Saturation | Global +15% saturation boost |
+| `golden_warm` | Temperature | Strong golden warm shift (R:1.20, G:1.00, B:0.80) |
 | `sat_reduce` | Saturation | Global -15% saturation reduction |
 | `sgamut3_to_cine` | Gamut | S-Gamut3 → Cine compensation (desat ~12%) |
+| `cinema_dark` | Contrast | Deep moody contrast (gamma 1.45, shadow lift, knee compression) |
 | `black_lift` | Black Level | Lifts blacks for vintage/faded look |
 
 ### Creative Presets (node chain combinations)
@@ -101,6 +119,8 @@ Available step types: `exposure`, `highlight_protect`, `black_crush`, `hue_desat
 | Studio Clean | Natural bright | studio_punch(50%) + sat_boost(50%) |
 | Studio Balanced | Warm natural | studio_punch(80%) + warm_shift(30%) + sat_boost(50%) + black_crush(15%) |
 | Studio Dance | Warm cinematic | studio_punch(100%) + warm_shift(40%) + sat_boost(60%) + black_crush(25%) |
+| Studio Ambient | No fill light | studio_punch(80%) + warm_shift(100%) + sat_boost(100%) + black_crush(20%) |
+| Studio Gold | Warm cinematic | cinema_dark(80%) + golden_warm(75%) + sat_boost(100%) + black_crush(10%) |
 | Studio Film | Moody cinematic | film_contrast(60%) + warm_shift(20%) + sat_reduce(30%) + black_crush(40%) |
 
 ### Baking Chain LUTs
@@ -117,7 +137,16 @@ ruby generate_chain_lut.rb correction_luts/studio_dance_baked.cube \
   studio_punch@1.0 warm_shift@0.4 sat_boost@0.6 black_crush@0.25
 ```
 
-Pre-baked LUTs for all four creative presets are committed in `correction_luts/`.
+Pre-baked LUTs for all creative presets are committed in `correction_luts/`.
+
+You can also bake a conversion LUT + creative chain into a single .cube for one-node grading in Resolve:
+
+```bash
+# Bake conversion + creative into a single pass LUT
+ruby generate_chain_lut.rb final_grade.cube \
+  --conversion=luts/SLog3_to_Rec709.cube \
+  cinema_dark@0.8 golden_warm@1.0 sat_boost@1.0 black_crush@0.1
+```
 
 ## Video Export Workflow
 
@@ -197,5 +226,5 @@ ffmpeg -i input.mp4 -vf "lut3d='conversion.cube':interp=tetrahedral,lut3d='corre
 ## Requirements
 
 - Ruby 2.7+
-- Python 3 with Pillow + NumPy (for auto_grade.py and analyze_frame.rb)
+- Python 3 with Pillow + NumPy (for auto_grade.py, match_grade.py, and analyze_frame.rb)
 - ffmpeg / ffprobe (for frame extraction and metadata)
