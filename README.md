@@ -100,14 +100,31 @@ straight into Resolve or Premiere.
 
 The [docs site](https://isaacrowntree.github.io/color-grade-ai) is auto-generated from [SKILL.md](SKILL.md). To rebuild: `ruby generate_docs.rb && cd docs && npm run build`
 
+## Tone model (v2)
+
+Tone operations run in **linear light** rather than on gamma-encoded HSL
+lightness, so they preserve hue and saturation instead of quietly shifting them.
+Greys are unchanged from v1; saturated colours move. See
+[Tone Model](SKILL.md#tone-model-v2) for the detail, and pass `--legacy` to any
+generator to reproduce v1 output exactly.
+
 ## Development
 
-Three suites, no test framework to install:
+Four suites, no test framework to install:
 
 ```bash
 ruby test_luts.rb          # preset pipelines, .cube output, golden-file regression
+ruby test_color_model.rb   # linear-light tone model, chromaticity, legacy parity
 ruby test_repo_hygiene.rb  # line endings, exec bits, skill/plugin manifests, CI wiring
 python3 test_auto_grade.py # frame analysis: white balance, skin, exposure
+```
+
+The shipped LUTs in `correction_luts/` are reproducible artifacts, generated from
+`correction_luts/manifest.yml`:
+
+```bash
+ruby regenerate_luts.rb          # rebuild them all
+ruby regenerate_luts.rb --check  # fail if what's committed has drifted
 ```
 
 All three run in CI on every push and pull request.

@@ -2,6 +2,7 @@
 # Pulls back saturation ~12% and subtle hue correction
 # Apply BEFORE or AFTER conversion LUT depending on workflow
 # Strength: 1.0
+# Color model: linear-light tone (v2)
 TITLE "S-Gamut3 to S-Gamut3.Cine Compensation"
 LUT_3D_SIZE 33
 

@@ -1,5 +1,6 @@
 # Global saturation increase for more vibrancy
 # Strength: 0.5
+# Color model: linear-light tone (v2)
 TITLE "Saturation Boost - +15%"
 LUT_3D_SIZE 33
 

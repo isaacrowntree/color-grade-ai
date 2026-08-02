@@ -217,6 +217,43 @@ Professional serial node chain:
 ffmpeg -i input.mp4 -vf "lut3d='conversion.cube':interp=tetrahedral,lut3d='correction.cube':interp=tetrahedral" output.mp4
 ```
 
+## Tone Model (v2)
+
+Tone operations — `exposure`, `black_crush`, `highlight_protect`, `skin_rolloff`,
+`skin_highlight` — run in **linear light**, not on gamma-encoded HSL lightness.
+
+The pipeline decodes with the BT.1886 display EOTF (pure 2.4 gamma), applies the
+curve to Rec.709 luminance, and scales R, G and B by the resulting ratio. Because
+all three channels are scaled together, hue and saturation are preserved by
+construction. Where brightening pushes a colour outside the cube, it is
+desaturated toward its target luminance rather than clipped per channel, which
+would skew the hue.
+
+Hue and saturation steps (`hue_desat`, `skin_correction`, `global_sat`,
+`shadow_sat_boost`, `rgb_rebalance`) still work in HSL, where perceptual
+behaviour is what you want.
+
+**What changed from v1.** v1 applied tone curves to HSL lightness,
+`L = (max + min) / 2`, which is not luminance — a saturated red and a grey that
+look equally bright have very different `L`, so they were tonemapped by different
+amounts and colours drifted relative to greys. Rewriting `L` and converting back
+also quietly shifted hue and saturation.
+
+Greys are bit-identical between v1 and v2. Only saturated colours move, by up to
+~0.37 at the most saturated grid points. 14 of the 27 shipped LUTs changed; the
+13 that are pure hue/saturation work are untouched.
+
+To reproduce v1 output exactly:
+
+```bash
+ruby generate_lut.rb black_crush out.cube --legacy
+ruby generate_chain_lut.rb out.cube studio_punch@0.8 sat_boost@0.5 --legacy
+ruby regenerate_luts.rb --legacy
+```
+
+`reference_checksums_legacy.yml` pins the v1 output, and the test suite asserts
+`--legacy` still reproduces it byte-for-byte.
+
 ## Color Science Notes
 
 - **Desaturating warm tones in HSL produces brown/sepia.** Use hue shifting or RGB rebalancing instead.

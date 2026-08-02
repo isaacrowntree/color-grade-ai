@@ -1,5 +1,6 @@
 # Fixes green tint from cheap LED or fluorescent lighting
 # Strength: 1.0
+# Color model: linear-light tone (v2)
 TITLE "LED Green Fix - Reduce Green Tint"
 LUT_3D_SIZE 33
 

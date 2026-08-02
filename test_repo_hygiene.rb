@@ -156,6 +156,21 @@ assert "a CI workflow runs test_auto_grade.py",
        all_workflow_text.include?('test_auto_grade.py')
 assert "a CI workflow runs test_repo_hygiene.rb",
        all_workflow_text.include?('test_repo_hygiene.rb')
+assert "a CI workflow runs test_color_model.rb",
+       all_workflow_text.include?('test_color_model.rb')
+
+# ── Test 5b: Version and baselines ────────────────────────────────────
+
+section "Versioning"
+
+assert "the frozen v1 baseline is committed for --legacy",
+       File.exist?(File.join(ROOT, 'reference_checksums_legacy.yml'))
+
+if File.exist?(plugin_path) && manifest
+  assert "plugin version is 2.x now that the tone model changed",
+         manifest['version'].to_s.start_with?('2.'),
+         "got #{manifest['version'].inspect}"
+end
 
 # ── Test 6: Documentation accuracy ────────────────────────────────────
 

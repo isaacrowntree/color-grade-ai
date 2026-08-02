@@ -2,6 +2,7 @@
 # g_gain stays at 1.0 to avoid green cast
 # Higher gain_ramp protects highlights from pink cast
 # Strength: 1.0
+# Color model: linear-light tone (v2)
 TITLE "Golden Warm - Strong Golden Tone"
 LUT_3D_SIZE 33
 

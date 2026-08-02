@@ -35,6 +35,105 @@ require 'yaml'
 
 LUT_DEFAULT_SIZE = 33
 
+# ── Transfer functions ───────────────────────────────────────────────
+#
+# Correction LUTs are applied to display-referred Rec.709 footage, after the
+# camera's log->709 conversion. The matching decode is the BT.1886 display
+# EOTF: a pure 2.4 power law. (Not the sRGB curve, which is a different
+# standard for computer displays, and not the Rec.709 OETF, which is the
+# camera-side encode.)
+#
+# Tone operations belong in linear light: doubling a linear value is doubling
+# the light, whereas doubling a gamma-encoded value is not a meaningful
+# photographic operation.
+
+DISPLAY_GAMMA = 2.4
+
+def to_linear(v)
+  return 0.0 if v <= 0.0
+  return 1.0 if v >= 1.0
+  v ** DISPLAY_GAMMA
+end
+
+def from_linear(v)
+  return 0.0 if v <= 0.0
+  return 1.0 if v >= 1.0
+  v ** (1.0 / DISPLAY_GAMMA)
+end
+
+# Rec.709 luminance coefficients — the same definition auto_grade.py measures
+# with, so the analyzer and the generator describe the same quantity.
+def luma_709(r, g, b)
+  0.2126 * r + 0.7152 * g + 0.0722 * b
+end
+
+# Steps whose maths is tonal, and therefore belongs in linear light.
+# Hue and saturation steps stay in HSL, where perceptual behaviour is what
+# is actually wanted.
+LINEAR_TONE_STEPS = %w[
+  exposure
+  black_crush
+  highlight_protect
+  skin_rolloff
+  skin_highlight
+].freeze
+
+# Apply a tone curve to an image's luminance while preserving its chromaticity.
+#
+# The curve is expressed in the *encoded* domain (0-1, perceptually spaced) so
+# that preset constants tuned against v1's HSL lightness remain meaningful.
+# The resulting change is then applied as a scale in linear light, which keeps
+# the ratios between R, G and B fixed — so hue and saturation come out
+# unchanged by construction, instead of being quietly rewritten by hsl_to_rgb.
+#
+# Yields the current encoded luminance; expects the new encoded luminance back.
+def apply_luma_curve(r, g, b)
+  lin_r, lin_g, lin_b = to_linear(r), to_linear(g), to_linear(b)
+  y_lin = luma_709(lin_r, lin_g, lin_b)
+
+  new_y_enc = yield(from_linear(y_lin))
+  new_y_lin = to_linear(new_y_enc)
+
+  return [r, g, b] if (new_y_lin - y_lin).abs < 1e-12
+
+  if y_lin <= 1e-12
+    # Pure black has no chromaticity to preserve and cannot be scaled;
+    # lift it as a neutral instead of dividing by zero.
+    v = from_linear(new_y_lin)
+    return [v, v, v]
+  end
+
+  scale = new_y_lin / y_lin
+  sr, sg, sb = lin_r * scale, lin_g * scale, lin_b * scale
+
+  # Brightening can push a saturated colour outside the cube. Clamping each
+  # channel independently would skew the ratios and therefore the hue, which is
+  # exactly what this function exists to avoid. Instead desaturate toward the
+  # target luminance until the colour fits: that holds luminance exactly, keeps
+  # the hue angle, and reads as a natural highlight rolloff.
+  peak = [sr, sg, sb].max
+  if peak > 1.0 && peak > new_y_lin
+    k = (1.0 - new_y_lin) / (peak - new_y_lin)
+    sr = new_y_lin + (sr - new_y_lin) * k
+    sg = new_y_lin + (sg - new_y_lin) * k
+    sb = new_y_lin + (sb - new_y_lin) * k
+  end
+
+  [
+    from_linear(clamp(sr)),
+    from_linear(clamp(sg)),
+    from_linear(clamp(sb)),
+  ]
+end
+
+# Recompute HSL state after a tone step so downstream hue/saturation steps see
+# consistent values. orig_l is deliberately left alone: the luminance-window
+# steps are tuned against it and are out of scope for the linear refactor.
+def resync_state(r, g, b, st)
+  h, s, l = rgb_to_hsl(r, g, b)
+  st.merge(h: h, s: s, l: l)
+end
+
 # ── Color space helpers ──────────────────────────────────────────────
 
 def rgb_to_hsl(r, g, b)
@@ -420,6 +519,135 @@ def step_global_sat(r, g, b, st, cfg, strength)
   [r, g, b, st.merge(s: new_s)]
 end
 
+# ── Linear-light tone steps (v2) ─────────────────────────────────────
+#
+# Same curves as their HSL counterparts above, but applied to luminance in
+# linear light via apply_luma_curve, so chromaticity survives the operation.
+# The legacy handlers are kept untouched so --legacy reproduces v1 exactly.
+
+def step_exposure_linear(r, g, b, st, cfg, strength)
+  gamma = 1.0 + (cfg['gamma'] - 1.0) * strength
+  shadow_lift = cfg['shadow_lift'] * strength
+
+  ro, go, bo = apply_luma_curve(r, g, b) do |y|
+    lifted = y + shadow_lift * (1.0 - y)
+    lifted ** gamma
+  end
+
+  [ro, go, bo, resync_state(ro, go, bo, st)]
+end
+
+def step_highlight_protect_linear(r, g, b, st, cfg, strength)
+  knee_start = cfg['knee_start']
+  knee_ceiling = cfg['knee_ceiling']
+
+  ro, go, bo = apply_luma_curve(r, g, b) do |y|
+    if y > knee_start
+      over = (y - knee_start) / (1.0 - knee_start)
+      knee_start + (knee_ceiling - knee_start) * (2.0 * over - over * over)
+    else
+      y
+    end
+  end
+
+  [ro, go, bo, resync_state(ro, go, bo, st)]
+end
+
+def step_black_crush_linear(r, g, b, st, cfg, strength)
+  black_threshold = cfg['black_threshold']
+  crush_gamma = 1.0 + (cfg['crush_gamma'] - 1.0) * strength
+  transition_end = cfg['transition_end']
+
+  ro, go, bo = apply_luma_curve(r, g, b) do |y|
+    if y < transition_end
+      crushed = y ** crush_gamma
+      if y < black_threshold
+        crushed
+      else
+        t = (y - black_threshold) / (transition_end - black_threshold)
+        t = t * t * (3.0 - 2.0 * t)
+        crushed + (y - crushed) * t
+      end
+    else
+      y
+    end
+  end
+
+  [ro, go, bo, resync_state(ro, go, bo, st)]
+end
+
+def step_skin_rolloff_linear(r, g, b, st, cfg, strength)
+  h, s = st[:h], st[:s]
+  min_sat = cfg['min_sat'] || 0.03
+
+  skin_str = s > min_sat ? hue_strength(h, cfg['skin_hue_center'],
+                                        cfg['skin_hue_width'],
+                                        cfg['skin_softness']) : 0.0
+  return [r, g, b, st] if skin_str <= 0
+
+  knee_start = cfg['knee_start']
+  knee_ceiling = cfg['knee_ceiling']
+  weight = skin_str * [s / 0.1, 1.0].min
+
+  ro, go, bo = apply_luma_curve(r, g, b) do |y|
+    if y > knee_start
+      y + (soft_knee_rolloff(y, knee_start, knee_ceiling) - y) * weight
+    else
+      y
+    end
+  end
+
+  [ro, go, bo, resync_state(ro, go, bo, st)]
+end
+
+def step_skin_highlight_linear(r, g, b, st, cfg, strength)
+  h, s = st[:h], st[:s]
+
+  skin_str = hue_strength(h, cfg['skin_hue_center'], cfg['skin_hue_width'],
+                          cfg['skin_softness'])
+  effective_skin = skin_str * [s / cfg['min_sat_ratio'], 1.0].min * strength
+
+  knee_start = cfg['knee_start']
+  global_knee = cfg['global_knee']
+
+  # Captured inside the curve block so the desaturation matches the branch
+  # that actually fired.
+  hot_amount = nil
+
+  ro, go, bo = apply_luma_curve(r, g, b) do |y|
+    if y > knee_start && effective_skin > 0.1
+      hot_amount = [(y - knee_start) / (1.0 - knee_start), 1.0].min
+      target = soft_knee_rolloff(y, knee_start, cfg['knee_ceiling'])
+      y + (target - y) * effective_skin
+    elsif y > global_knee
+      target = soft_knee_rolloff(y, global_knee, cfg['global_ceiling'])
+      y + (target - y) * strength * (1.0 - effective_skin)
+    else
+      y
+    end
+  end
+
+  state = resync_state(ro, go, bo, st)
+
+  # Hot skin also loses saturation — that part stays an HSL operation.
+  if hot_amount
+    desat_factor = 1.0 - (1.0 - cfg['hot_desat']) * hot_amount * effective_skin
+    new_s = state[:s] * desat_factor
+    ro, go, bo = hsl_to_rgb(state[:h], new_s, state[:l])
+    state = state.merge(s: new_s)
+  end
+
+  [ro, go, bo, state]
+end
+
+LINEAR_STEP_HANDLERS = {
+  'exposure'          => method(:step_exposure_linear),
+  'highlight_protect' => method(:step_highlight_protect_linear),
+  'black_crush'       => method(:step_black_crush_linear),
+  'skin_rolloff'      => method(:step_skin_rolloff_linear),
+  'skin_highlight'    => method(:step_skin_highlight_linear),
+}.freeze
+
 STEP_HANDLERS = {
   'global_sat'           => method(:step_global_sat),
   'rgb_rebalance'        => method(:step_rgb_rebalance),
@@ -434,14 +662,24 @@ STEP_HANDLERS = {
   'global_highlight_desat' => method(:step_global_highlight_desat),
 }
 
-def apply_pipeline(r, g, b, pipeline, strength)
+DEFAULT_COLOR_MODEL = :linear
+
+# color_model: :linear (default, v2) routes tone steps through linear light.
+#              :hsl               reproduces v1 exactly, for --legacy.
+def apply_pipeline(r, g, b, pipeline, strength, color_model: DEFAULT_COLOR_MODEL)
   h, s, l = rgb_to_hsl(r, g, b)
   state = { h: h, s: s, l: l, orig_l: l }
 
   pipeline.each do |step_cfg|
     step_type = step_cfg['step']
-    handler = STEP_HANDLERS[step_type]
+
+    handler = if color_model == :linear && LINEAR_TONE_STEPS.include?(step_type)
+                LINEAR_STEP_HANDLERS[step_type]
+              else
+                STEP_HANDLERS[step_type]
+              end
     abort "Unknown step type: #{step_type}" unless handler
+
     r, g, b, state = handler.call(r, g, b, state, step_cfg, strength)
   end
 
@@ -495,30 +733,35 @@ if __FILE__ == $0
       Options:
         --strength=N   Overall strength 0.0-1.0 (default: 1.0)
         --size=N       LUT grid size (default: 33)
+        --legacy       Use the v1 HSL tone model instead of linear light
     USAGE
   end
 
   output_path = ARGV.shift || abort("Specify output path")
   strength = 1.0
   size = LUT_DEFAULT_SIZE
+  color_model = DEFAULT_COLOR_MODEL
 
   ARGV.each do |arg|
     if arg =~ /--strength=([\d.]+)/
       strength = $1.to_f
     elsif arg =~ /--size=(\d+)/
       size = $1.to_i
+    elsif arg == '--legacy'
+      color_model = :hsl
     end
   end
 
   preset = load_preset(lut_type)
   title = preset['title']
-  comments = (preset['comments'] || []) + ["Strength: #{strength}"]
+  model_note = color_model == :linear ? 'linear-light tone (v2)' : 'legacy HSL tone (v1)'
+  comments = (preset['comments'] || []) + ["Strength: #{strength}", "Color model: #{model_note}"]
   pipeline = preset['pipeline']
 
   puts "Generating #{lut_type} LUT..."
 
   table = generate_lut(size) do |r, g, b|
-    apply_pipeline(r, g, b, pipeline, strength)
+    apply_pipeline(r, g, b, pipeline, strength, color_model: color_model)
   end
 
   write_cube(output_path, table, size, title, comments)
@@ -526,6 +769,7 @@ if __FILE__ == $0
   puts "Generated: #{output_path}"
   puts "LUT size: #{size}x#{size}x#{size}"
   puts "Strength: #{strength}"
+  puts "Color model: #{model_note}"
   puts ""
   puts "Usage in DaVinci Resolve:"
   puts "  Add a node AFTER your main conversion LUT"

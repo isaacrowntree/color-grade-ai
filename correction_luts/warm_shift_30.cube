@@ -1,5 +1,6 @@
 # Subtle warm shift via RGB rebalance
 # Strength: 0.3
+# Color model: linear-light tone (v2)
 TITLE "Warm Shift - Add Warmth"
 LUT_3D_SIZE 33
 

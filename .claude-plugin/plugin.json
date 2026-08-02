@@ -1,7 +1,7 @@
 {
   "name": "color-grade-ai",
   "description": "Generate targeted .cube 3D LUTs for color correction in DaVinci Resolve and Adobe Premiere Pro. Analyzes a frame, identifies the colour problem, and generates a correction LUT.",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "author": {
     "name": "Isaac Rowntree",
     "url": "https://github.com/isaacrowntree"

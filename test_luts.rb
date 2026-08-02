@@ -285,6 +285,33 @@ else
   puts "  SKIP: generate_docs.rb not found"
 end
 
+# ── Test 8: Shipped LUTs match their manifest ────────────────────────
+
+section "Shipped LUTs"
+
+manifest_path = File.join(__dir__, 'correction_luts', 'manifest.yml')
+assert "correction_luts/manifest.yml exists", File.exist?(manifest_path)
+
+if File.exist?(manifest_path)
+  manifest = YAML.load_file(manifest_path)
+
+  shipped = Dir.glob(File.join(__dir__, 'correction_luts', '*.cube'))
+               .map { |p| File.basename(p, '.cube') }.sort
+  assert "manifest covers every shipped LUT",
+         (shipped - manifest.keys).empty?,
+         "unlisted: #{(shipped - manifest.keys).join(', ')}"
+  assert "manifest has no entries without a file",
+         (manifest.keys - shipped).empty?,
+         "missing files: #{(manifest.keys - shipped).join(', ')}"
+
+  # The committed .cube files must be exactly what regenerate_luts.rb produces,
+  # so they can never silently drift from presets.yml.
+  regen = File.join(__dir__, 'regenerate_luts.rb')
+  output = `ruby "#{regen}" --check 2>&1`
+  assert "shipped LUTs match the current tone model", $?.success?,
+         output.lines.map(&:strip).reject(&:empty?).last
+end
+
 # ── Summary ───────────────────────────────────────────────────────────
 
 puts "\n#{'=' * 50}"

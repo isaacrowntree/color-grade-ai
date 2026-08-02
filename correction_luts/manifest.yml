@@ -1,0 +1,107 @@
+# How every shipped LUT is generated. Rebuild with: ruby regenerate_luts.rb
+---
+black_crush:
+  preset: black_crush
+  strength: 1.0
+black_crush_50:
+  preset: black_crush
+  strength: 0.5
+black_crush_70:
+  preset: black_crush
+  strength: 0.7
+black_lift:
+  preset: black_lift
+  strength: 1.0
+cinema_dark:
+  preset: cinema_dark
+  strength: 1.0
+cool_shift:
+  preset: cool_shift
+  strength: 1.0
+film_contrast:
+  preset: film_contrast
+  strength: 1.0
+film_contrast_80:
+  preset: film_contrast
+  strength: 0.8
+flat_lift:
+  preset: flat_lift
+  strength: 1.0
+flat_lift_60:
+  preset: flat_lift
+  strength: 0.6
+golden_warm:
+  preset: golden_warm
+  strength: 1.0
+led_green_fix:
+  preset: led_green_fix
+  strength: 1.0
+red_skin_fix:
+  preset: red_skin_fix
+  strength: 1.0
+sat_boost:
+  preset: sat_boost
+  strength: 1.0
+sat_boost_50:
+  preset: sat_boost
+  strength: 0.5
+sat_boost_70:
+  preset: sat_boost
+  strength: 0.7
+sat_reduce:
+  preset: sat_reduce
+  strength: 1.0
+sat_reduce_40:
+  preset: sat_reduce
+  strength: 0.4
+sgamut3_to_cine:
+  preset: sgamut3_to_cine
+  strength: 1.0
+studio_balanced_baked:
+  chain:
+  - preset: studio_punch
+    strength: 0.8
+  - preset: warm_shift
+    strength: 0.3
+  - preset: sat_boost
+    strength: 0.5
+  - preset: black_crush
+    strength: 0.15
+studio_clean_baked:
+  chain:
+  - preset: studio_punch
+    strength: 0.5
+  - preset: sat_boost
+    strength: 0.5
+studio_dance_baked:
+  chain:
+  - preset: studio_punch
+    strength: 1.0
+  - preset: warm_shift
+    strength: 0.4
+  - preset: sat_boost
+    strength: 0.6
+  - preset: black_crush
+    strength: 0.25
+studio_film_baked:
+  chain:
+  - preset: film_contrast
+    strength: 0.6
+  - preset: warm_shift
+    strength: 0.2
+  - preset: sat_reduce
+    strength: 0.3
+  - preset: black_crush
+    strength: 0.4
+studio_punch:
+  preset: studio_punch
+  strength: 1.0
+warm_shift:
+  preset: warm_shift
+  strength: 1.0
+warm_shift_30:
+  preset: warm_shift
+  strength: 0.3
+warm_shift_50:
+  preset: warm_shift
+  strength: 0.5

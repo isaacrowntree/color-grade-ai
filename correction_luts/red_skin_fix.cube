@@ -5,6 +5,7 @@
 # Apply AFTER LogC to Rec.709 conversion
 # Compatible with DaVinci Resolve and Adobe Premiere Pro
 # Strength: 1.0
+# Color model: linear-light tone (v2)
 TITLE "Red Skin Fix - H354-30 Skin Only Hue to Peach"
 LUT_3D_SIZE 33
 

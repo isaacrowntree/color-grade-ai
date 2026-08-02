@@ -20,6 +20,9 @@ jobs:
       - name: LUT generation suite
         run: ruby test_luts.rb
 
+      - name: Color model suite
+        run: ruby test_color_model.rb
+
       - name: Repository hygiene suite
         run: ruby test_repo_hygiene.rb
 

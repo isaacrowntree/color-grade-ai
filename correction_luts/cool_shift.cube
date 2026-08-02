@@ -1,5 +1,6 @@
 # Subtle cool shift via RGB rebalance
 # Strength: 1.0
+# Color model: linear-light tone (v2)
 TITLE "Cool Shift - Add Coolness"
 LUT_3D_SIZE 33
 
