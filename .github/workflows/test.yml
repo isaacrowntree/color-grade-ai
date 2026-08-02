@@ -68,5 +68,12 @@ jobs:
         with:
           node-version: 20
 
+      # The parity suite drives the real Ruby implementation over a pipe rather
+      # than comparing against committed .cube files, so Ruby is a hard
+      # dependency here. Pin it instead of relying on whatever the runner ships.
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.2'
+
       - name: Pipeline parity suite
         run: node --test test_pipeline.mjs
