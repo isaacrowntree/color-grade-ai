@@ -250,13 +250,17 @@ section "Docs Generation"
 
 docs_script = File.join(__dir__, 'generate_docs.rb')
 if File.exist?(docs_script)
-  result = `ruby "#{docs_script}" 2>&1`
-  success = $?.success?
-  assert "generate_docs.rb runs without error", success, result.lines.last&.strip
+  # Check only — never regenerate. The published site is what users read, so
+  # the committed page is the thing under test; rewriting it first would pass
+  # even when it had drifted from SKILL.md. It also means a failing run leaves
+  # no modified tracked files behind.
+  check = `ruby "#{docs_script}" --check 2>&1`
+  assert "committed docs page is in sync with SKILL.md", $?.success?,
+         check.lines.map(&:strip).reject(&:empty?).last
 
   # The docs site is a single page generated from SKILL.md (see commit e8a4dc0).
   index_md = File.join(__dir__, 'docs', 'src', 'content', 'docs', 'index.md')
-  assert "docs index.md generated", File.exist?(index_md)
+  assert "docs index.md exists", File.exist?(index_md)
 
   if File.exist?(index_md)
     generated = File.read(index_md)

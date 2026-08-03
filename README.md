@@ -43,7 +43,9 @@ ruby generate_chain_lut.rb studio_balanced.cube \
 
 ### Interactive Preview
 
-Drag-and-drop a frame, load your conversion LUT, and dial in corrections across a 6-node chain — all in the browser.
+Drag-and-drop a frame, load your conversion LUT, and dial in corrections across a
+6-node chain — all in the browser. LUTs are generated live at the exact strength
+you set, and **Export .cube** saves the chain you are looking at.
 
 ![Preview UI](docs/public/preview-screenshot.png)
 
@@ -53,16 +55,20 @@ Drag-and-drop a frame, load your conversion LUT, and dial in corrections across 
 
 ### Requirements
 
-- Ruby 2.7+
-- Python 3 with [Pillow](https://pillow.readthedocs.io/) + NumPy
-- [ffmpeg](https://ffmpeg.org/)
+- **Ruby 2.7+** — all you need to generate LUTs; no gems
+- **Python 3** with [Pillow](https://pillow.readthedocs.io/), NumPy and PyYAML
+  — for frame analysis and fitting corrections
+- **[ffmpeg](https://ffmpeg.org/)** — for frame extraction and clip sampling
+
+Only want the LUTs? You need none of this — see
+[Just want the LUTs?](#just-want-the-luts) below.
 
 ### Install
 
 ```bash
 git clone https://github.com/isaacrowntree/color-grade-ai.git
 cd color-grade-ai
-pip3 install Pillow numpy
+pip3 install Pillow numpy PyYAML
 ```
 
 ### Quick Example

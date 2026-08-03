@@ -5,7 +5,13 @@ description: AI-powered .cube LUT generation for color correction in DaVinci Res
 
 # Color Grade AI
 
-Generate targeted .cube 3D LUTs for color correction. Auto-analyze frames and recommend DaVinci Resolve-style node chain settings. Interactive in-browser preview with Preact.
+Generate targeted .cube 3D LUTs for color correction.
+
+Point it at a frame or a clip and it measures what is wrong, fits the correction
+by applying candidates and re-measuring, and hands you a `.cube`. It states
+whether the footage is log or display-referred before it does anything, because
+every target here assumes display-referred Rec.709. Interactive in-browser
+preview generates LUTs live and exports the chain you are looking at.
 
 ## Quick Start
 
@@ -16,8 +22,17 @@ ruby generate_lut.rb <type> <output_path> [--strength=0.0-1.0]
 # Bake multiple presets into a single .cube LUT
 ruby generate_chain_lut.rb <output_path> <preset@strength> ...
 
-# Auto-analyze a frame and get node recommendations
-python3 auto_grade.py <frame.png>
+# Is this log or display-referred Rec.709?
+python3 footage_type.py <frame.png>
+
+# Analyse a frame, and optionally fit and emit the correction
+python3 auto_grade.py <frame.png> [--emit fix.cube] [--transfer log|display]
+
+# Fit a correction without the analysis report
+python3 solve_grade.py <frame.png> --emit fix.cube
+
+# Fit one correction for a whole clip rather than one frame
+python3 sample_clip.py <clip.mov> --emit fix.cube [--frames 12]
 
 # Match one shot to another and emit the LUT
 python3 match_grade.py <reference.png> <output.png> --emit match.cube
@@ -66,18 +81,26 @@ conversion LUT, not a grading problem.
 
 ## Interactive Preview (preview.html)
 
-Browser-based node chain previewer using Preact + HTM (~4KB). Applies .cube LUTs on canvas in real-time.
+Browser-based node chain previewer using Preact + HTM (~4KB). Correction LUTs
+are **generated live** from `presets.json` at the exact strength requested, not
+fetched pre-baked — so the slider interpolates parameters, the same operation
+the CLI performs, and what you see is what `generate_lut.rb` emits.
 
 Features:
 - **Drag-and-drop** any frame (raw S-Log3 or converted)
 - **Node 1: Conversion LUT** — add your own .cube files (not included in repo)
 - **Nodes 2-6: Correction chain** — dropdown presets + strength sliders
+- **Export .cube** — bakes the whole visible chain to a file you can drop into
+  Resolve, so the preview is not a separate thing you have to reproduce
 - **Creative presets** — one-click curated looks (Studio Dance, Studio Clean, Studio Ambient, Studio Gold, Studio Film)
 - **S-Gamut3 → Cine compensation** toggle for gamut mismatch
 - **Bypass/reset** all nodes instantly
 - **URL parameters** — deep-link to a specific state: `?image=frame.png&lut=path/to.cube&preset=studio_gold`
 
-Correction LUTs are committed in `correction_luts/`. Conversion LUTs are user-provided (gitignored in `luts/`).
+The preview generates at a 17-grid (~30ms, keeps up with a slider) and exports
+at 33. Conversion LUTs are user-provided (gitignored in `luts/`); the pre-baked
+correction LUTs in `correction_luts/` remain for download-only users who never
+run the tools.
 
 ## Config-Driven Presets
 
@@ -386,6 +409,23 @@ ruby regenerate_luts.rb --legacy
 
 ## Requirements
 
-- Ruby 2.7+
-- Python 3 with Pillow + NumPy (for auto_grade.py, match_grade.py, and analyze_frame.rb)
-- ffmpeg / ffprobe (for frame extraction and metadata)
+**To generate LUTs** — Ruby 2.7+ and nothing else. `generate_lut.rb`,
+`generate_chain_lut.rb` and `regenerate_luts.rb` have no gems to install.
+
+**To analyse frames and fit corrections** — Python 3 with:
+
+```bash
+pip3 install Pillow numpy PyYAML
+```
+
+`PyYAML` is needed because the solver reads `presets.yml` when it uses a library
+preset. Missing it fails only on the skin stage, which is an easy trap.
+
+**To sample clips** — `ffmpeg` and `ffprobe` on PATH, used by `sample_clip.py`
+for frame extraction and duration probing.
+
+**To run the full test suite** — additionally Node 20+, for the browser
+pipeline parity suite. Not needed to use the tool.
+
+`preview.html` needs a static server (`python3 -m http.server`) rather than
+`file://`, because it loads `presets.json` and `pipeline.mjs` as modules.
