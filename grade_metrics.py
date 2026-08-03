@@ -28,6 +28,9 @@ WEIGHTS = {
     'exposure': 0.8,
     'black_level': 0.6,
     'skin_hue': 0.5,
+    # Lowest weight of the four: it only fires when saturation has left any
+    # plausible range, and it is the most scene-dependent judgement here.
+    'saturation': 0.4,
 }
 
 
@@ -210,6 +213,47 @@ def black_level_error(image):
     return max(0.0, p01 - TARGET_BLACK_POINT)
 
 
+# ── Saturation ───────────────────────────────────────────────────────
+#
+# Unlike white balance or exposure, there is no target here. Colourfulness is a
+# property of the scene: a grey warehouse is legitimately drab and a fruit
+# market is legitimately vivid. The pristine evaluation scene measures 63.8,
+# well above auto_grade's old target of 45 — fitting to that number would have
+# "corrected" a scene that was already right.
+#
+# So this measures only whether saturation has left any plausible range, and
+# stays silent inside it. The band is wide on purpose.
+
+SATURATION_BAND = (25.0, 95.0)
+
+
+def colorfulness(image):
+    """Hasler-Susstrunk colourfulness, on the 0-255 scale it is defined for."""
+    arr = _as_float(image) * 255.0
+    r, g, b = arr[..., 0], arr[..., 1], arr[..., 2]
+    rg = (r - g).ravel()
+    yb = (0.5 * (r + g) - b).ravel()
+    return float(np.sqrt(rg.var() + yb.var()) +
+                 0.3 * np.sqrt(rg.mean() ** 2 + yb.mean() ** 2))
+
+
+def saturation_error(image):
+    """Signed distance outside the plausible band; 0 anywhere inside it.
+
+    Negative means washed out, positive means overcooked. Normalised by the
+    band width so it sits on roughly the same scale as the other terms.
+    """
+    value = colorfulness(image)
+    low, high = SATURATION_BAND
+    width = high - low
+
+    if value < low:
+        return (value - low) / width
+    if value > high:
+        return (value - high) / width
+    return 0.0
+
+
 def skin_hue_error(image):
     """Absolute skin hue error in degrees, or 0 when no skin is present."""
     hue = skin_hue(image)
@@ -226,6 +270,7 @@ def measure(image):
         'white_balance': white_balance_error(image),
         'exposure': exposure_error(image),
         'black_level': black_level_error(image),
+        'saturation': saturation_error(image),
         'skin_hue': skin_hue_error(image),
         'skin_confidence': skin_confidence(image),
     }
@@ -248,5 +293,6 @@ def total_error(image):
         WEIGHTS['white_balance'] * m['white_balance'] +
         WEIGHTS['exposure'] * abs(m['exposure']) +
         WEIGHTS['black_level'] * m['black_level'] +
+        WEIGHTS['saturation'] * abs(m['saturation']) +
         skin_term(image, measured=m)
     )

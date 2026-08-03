@@ -19,8 +19,8 @@ ruby generate_chain_lut.rb <output_path> <preset@strength> ...
 # Auto-analyze a frame and get node recommendations
 python3 auto_grade.py <frame.png>
 
-# Compare reference vs output and get adjustment suggestions
-python3 match_grade.py <reference.png> <output.png>
+# Match one shot to another and emit the LUT
+python3 match_grade.py <reference.png> <output.png> --emit match.cube
 
 # Analyze specific regions for color stats
 ruby analyze_frame.rb <image_path> <x1,y1,x2,y2> [label]
@@ -38,8 +38,8 @@ python3 -m http.server 8080
 |------|--------|--------|
 | Contrast/Exposure | Luminance histogram percentiles | Median ~0.45, dynamic range ~0.85 |
 | White Balance | Shades of Gray (Minkowski p=6) + White Patch blend | RGB gains near 1.0 |
-| Skin Tone | HSV-based skin detection, I-line targeting | Hue ~20° (peach) |
-| Saturation | Hasler-Susstrunk colorfulness metric | Colorfulness 35-55 |
+| Skin Tone | YCbCr skin-locus detection, I-line targeting | Hue ~20° (peach) |
+| Saturation | Hasler-Susstrunk colorfulness metric | *no target* — acts only outside 25-95 |
 | Black Level | Bottom 5% luminance analysis + noise floor | Black point < 0.02 |
 
 ```bash
@@ -49,15 +49,20 @@ ffmpeg -y -i frame_raw.png -vf "lut3d='conversion.cube':interp=tetrahedral" -upd
 python3 auto_grade.py frame_709.png
 ```
 
-## Match Grade Analysis
+## Match Grade
 
-`match_grade.py` compares a reference image against an output image and suggests preset adjustments to bring the output closer to the reference.
+`match_grade.py` fits a correction that moves one frame toward another and emits
+the `.cube`. Same closed-loop method as `solve_grade.py` — apply, re-measure,
+keep what closes the gap — but the target is a reference image rather than a set
+of fixed ideals.
 
 ```bash
-python3 match_grade.py <reference.png> <output.png>
+python3 match_grade.py <reference.png> <output.png> --emit match.cube
 ```
 
-Useful for matching grades across clips or iterating toward a target look.
+It matches channel balance, exposure, black level and saturation, and refuses to
+tone-match across transfer curves: matching log against Rec.709 is a missing
+conversion LUT, not a grading problem.
 
 ## Interactive Preview (preview.html)
 
@@ -289,12 +294,22 @@ because that is a shape correction rather than a magnitude.
 **What it measures** (`grade_metrics.py`, reference-free — no pristine
 reference needed):
 
-| Measurement | Target |
-|---|---|
-| White balance | neutral illuminant, skin and saturated props excluded |
-| Exposure | median luminance 0.45 |
-| Black level | black point 0.02 |
-| Skin hue | 20 degrees |
+| Measurement | Target | Runs on log? |
+|---|---|---|
+| White balance | neutral illuminant, skin and saturated props excluded | yes |
+| Skin hue | 20 degrees | yes |
+| Exposure | median luminance 0.45 | no |
+| Black level | black point 0.02 | no |
+| Saturation | *no target* — only acts outside a plausible band | no |
+
+**Saturation has no target on purpose.** Colourfulness is a property of the
+scene: a grey warehouse is legitimately drab and a fruit market legitimately
+vivid. The evaluation scene measures 63.8 against `auto_grade`'s old fixed
+target of 45 — fitting to that number would "correct" a scene that was already
+right. So the solver stays silent inside a wide band and only acts when
+saturation has left any plausible range. It is display-only for the same reason
+the tone stages are: log measures 37.6 against 63.8 for the same scene in
+Rec.709, because it is desaturated by design.
 
 **Skin detection** uses the YCbCr skin locus rather than an HSV box. An HSV box
 that accepts skin also accepts wood, khaki and amber practicals — "warm and
@@ -306,8 +321,9 @@ exists to correct, and tight toward the wood and amber direction.
 blown frame cannot steer the grade, and warns when the clip varies too much to
 deserve a single LUT.
 
-Measured on the synthetic evaluation set (`eval_scenes.py`, nine known defects),
-closed-loop grading removes a mean of **79%** of the introduced error.
+Measured on the synthetic evaluation set (`eval_scenes.py`, eleven known
+defects), closed-loop grading removes a mean of **81%** of the introduced
+error, worst case 60%.
 
 ## Interactive LUT Generation
 

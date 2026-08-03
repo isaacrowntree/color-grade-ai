@@ -84,18 +84,24 @@ def pristine(seed=0):
 
 
 def degrade(scene, gains=(1.0, 1.0, 1.0), gamma=1.0, black_lift=0.0,
-            highlight_gain=1.0):
+            highlight_gain=1.0, saturation=1.0):
     """Apply a known, invertible-in-principle error to a pristine scene.
 
     gains          per-channel multiplier (a colour cast)
     gamma          out = in ** gamma (>1 darkens, <1 brightens)
     black_lift     raises the floor, the classic milky-blacks look
     highlight_gain scales the top end, for blown highlights
+    saturation     scales distance from luminance (<1 washes out, >1 overcooks)
     """
     out = np.asarray(scene, dtype=np.float64).copy()
 
     for c in range(3):
         out[:, :, c] *= gains[c]
+
+    if saturation != 1.0:
+        lum = (0.2126 * out[:, :, 0] + 0.7152 * out[:, :, 1] +
+               0.0722 * out[:, :, 2])[:, :, None]
+        out = lum + (out - lum) * saturation
 
     if gamma != 1.0:
         out = np.clip(out, 0.0, None) ** gamma
@@ -152,6 +158,8 @@ CASES = {
     'milky_blacks': dict(black_lift=0.16),
     'warm_and_dark': dict(gains=(1.18, 1.0, 0.82), gamma=1.40),
     'cool_and_milky': dict(gains=(0.86, 1.0, 1.14), black_lift=0.12),
+    'washed_out': dict(saturation=0.32),
+    'oversaturated': dict(saturation=1.95),
 }
 
 

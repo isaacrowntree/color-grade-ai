@@ -55,6 +55,11 @@ def descriptor(image):
     for i, name in enumerate(('r', 'g', 'b')):
         desc[f'mean_{name}'] = float(np.mean(pixels[:, i]))
 
+    # Two shots can agree on channel means and still differ in how vivid they
+    # are, so saturation is matched explicitly. Unlike the fixed-target solver
+    # there is no band here: the reference *is* the target.
+    desc['colorfulness'] = grade_metrics.colorfulness(arr)
+
     desc['skin_hue'] = grade_metrics.skin_hue(arr)
     desc['skin_confidence'] = grade_metrics.skin_confidence(arr)
     return desc
@@ -68,6 +73,9 @@ DISTANCE_WEIGHTS = {
     'shadow': 0.8,
     'highlight': 0.8,
     'contrast': 0.6,
+    # Colourfulness runs 0-100ish rather than 0-1, so it needs a small
+    # coefficient to sit on the same scale as the rest.
+    'colorfulness': 0.02,
 }
 
 
@@ -152,9 +160,29 @@ def fit_black_level_to(target, current):
     return build, 'matched_black_level'
 
 
+def fit_saturation_to(target, current):
+    """Solve the saturation multiplier that matches the reference's vividness."""
+    ref = descriptor(target)['colorfulness']
+    cur = descriptor(current)['colorfulness']
+
+    if cur <= 1e-6:
+        return None
+    boost = ref / cur
+    if abs(boost - 1.0) < 0.02:
+        return None
+
+    def build(scale):
+        return [{'pipeline': [{'step': 'global_sat',
+                               'boost': 1.0 + (boost - 1.0) * scale}],
+                 'strength': 1.0}]
+
+    return build, 'matched_saturation'
+
+
 MATCHERS = [
     ('white_balance', fit_channel_balance, False),
     ('exposure', fit_exposure_to, True),
+    ('saturation', fit_saturation_to, True),
     ('black_level', fit_black_level_to, True),
 ]
 

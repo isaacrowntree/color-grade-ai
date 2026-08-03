@@ -80,6 +80,18 @@ class TestMatching(unittest.TestCase):
     def test_matches_a_combined_defect(self):
         self.assert_closes_gap('warm_and_dark')
 
+    def test_matches_a_washed_out_shot(self):
+        self.assert_closes_gap('washed_out')
+
+    def test_matches_an_oversaturated_shot(self):
+        self.assert_closes_gap('oversaturated')
+
+    def test_saturation_is_matched_explicitly(self):
+        """Two shots can agree on channel means and still differ in vividness."""
+        base, washed = pair('washed_out')
+        plan = match_grade.match(base, washed)
+        self.assertIn('matched_saturation', [s['preset'] for s in plan.chain])
+
     def test_matching_a_frame_to_itself_does_nothing(self):
         base = eval_scenes.pristine()
         plan = match_grade.match(base, base)

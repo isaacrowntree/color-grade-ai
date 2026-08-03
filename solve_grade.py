@@ -194,6 +194,36 @@ def fit_black_level(image):
     return build, 'fitted_black_crush'
 
 
+def fit_saturation(image):
+    """Solve a global saturation multiplier, but only when clearly out of band.
+
+    There is no saturation target to fit toward — colourfulness is a property
+    of the scene — so this aims at the nearest edge of the plausible range
+    rather than at a number, and does nothing inside it.
+    """
+    error = grade_metrics.saturation_error(image)
+    if error == 0.0:
+        return None
+
+    current = grade_metrics.colorfulness(image)
+    low, high = grade_metrics.SATURATION_BAND
+    edge = low if error < 0 else high
+    if current <= 1e-6:
+        return None
+
+    # Colourfulness moves roughly linearly with an HSL saturation multiplier,
+    # so the ratio to the band edge is a good first estimate; the scale search
+    # corrects the rest.
+    boost = edge / current
+
+    def build(scale):
+        scaled = 1.0 + (boost - 1.0) * scale
+        return [{'pipeline': [{'step': 'global_sat', 'boost': scaled}],
+                 'strength': 1.0}]
+
+    return build, 'fitted_saturation'
+
+
 def fit_skin(image):
     """Skin hue is a shape correction, so use the tuned library preset."""
     if grade_metrics.skin_hue_error(image) <= 3.0:
@@ -216,10 +246,14 @@ def fit_skin(image):
 # so these are held back unless the footage is confirmed display-referred.
 # White balance and skin hue are not tone-dependent: a cast is a cast, and skin
 # should read as skin, whatever the transfer curve.
+# Saturation is display-only for the same reason as the tone stages: log is
+# desaturated by design (37.6 against 63.8 for the same scene in Rec.709), so
+# "correcting" it would be actively wrong.
 FITTERS = [
     ('white_balance', fit_white_balance, False),
     ('exposure', fit_exposure, True),
     ('skin', fit_skin, False),
+    ('saturation', fit_saturation, True),
     ('black_level', fit_black_level, True),
 ]
 

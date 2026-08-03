@@ -261,6 +261,60 @@ class TestSparseSkinDoesNotDominate(unittest.TestCase):
         self.assertLess(marginal, ample)
 
 
+class TestSaturation(unittest.TestCase):
+    """Saturation is far more scene-dependent than white balance or exposure.
+
+    A frame of a grey warehouse is legitimately colourless; a frame of a fruit
+    market is legitimately vivid. So this is deliberately not fitted to a
+    target number — the pristine evaluation scene measures 63.8 against
+    auto_grade's old target of 45, which would have called a correct scene
+    oversaturated. It only acts when saturation is outside any plausible band.
+    """
+
+    def test_a_correct_scene_reads_as_fine(self):
+        self.assertEqual(
+            grade_metrics.saturation_error(eval_scenes.pristine()), 0.0)
+
+    def test_no_existing_case_triggers_a_saturation_correction(self):
+        """Adding this term must not disturb the cases that were already right."""
+        for case in eval_scenes.CASES:
+            if case in ('washed_out', 'oversaturated'):
+                continue
+            with self.subTest(case=case):
+                _, degraded = eval_scenes.build(case)
+                self.assertEqual(grade_metrics.saturation_error(degraded), 0.0,
+                                 f'{case} spuriously flagged as a saturation defect')
+
+    def test_washed_out_is_detected(self):
+        _, washed = eval_scenes.build('washed_out')
+        self.assertLess(grade_metrics.saturation_error(washed), 0.0,
+                        'undersaturation should read negative')
+
+    def test_oversaturated_is_detected(self):
+        _, hot = eval_scenes.build('oversaturated')
+        self.assertGreater(grade_metrics.saturation_error(hot), 0.0,
+                           'oversaturation should read positive')
+
+    def test_washed_out_is_corrected(self):
+        _, degraded, result, plan = graded('washed_out')
+        self.assertIn('fitted_saturation', [s['preset'] for s in plan.chain])
+        self.assertLess(abs(grade_metrics.saturation_error(result)),
+                        abs(grade_metrics.saturation_error(degraded)))
+
+    def test_oversaturated_is_corrected(self):
+        _, degraded, result, plan = graded('oversaturated')
+        self.assertIn('fitted_saturation', [s['preset'] for s in plan.chain])
+        self.assertLess(abs(grade_metrics.saturation_error(result)),
+                        abs(grade_metrics.saturation_error(degraded)))
+
+    def test_saturation_is_not_fitted_on_log(self):
+        """Log is desaturated by design — 37.6 against 63.8 for the same scene
+        in Rec.709 — so 'fixing' it would be actively wrong."""
+        log = eval_scenes.as_log(eval_scenes.pristine())
+        plan = solve_grade.solve(log)
+        self.assertNotIn('fitted_saturation', [s['preset'] for s in plan.chain])
+
+
 class TestLogAwareSolving(unittest.TestCase):
     """Tone targets describe a graded Rec.709 image, not a log container."""
 
