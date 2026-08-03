@@ -37,8 +37,9 @@ python3 sample_clip.py <clip.mov> --emit fix.cube [--frames 12]
 # Match one shot to another and emit the LUT
 python3 match_grade.py <reference.png> <output.png> --emit match.cube
 
-# Analyze specific regions for color stats
+# Colour statistics for one region (skin, wall, costume...)
 ruby analyze_frame.rb <image_path> <x1,y1,x2,y2> [label]
+python3 analyze_region.py <image_path> <x1,y1,x2,y2> [label]   # JSON only
 
 # Serve the interactive preview
 python3 -m http.server 8080

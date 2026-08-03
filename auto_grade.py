@@ -19,13 +19,14 @@ Methodology:
         - Outputs RGB gains for channel rebalancing
 
     Node 4 (Skin Tone):
-        - HSV-based skin detection (H:0-50, S:0.10-0.70, V:0.20-0.90)
+        - YCbCr skin-locus detection, shared with the solver (grade_metrics)
         - Measures mean skin hue vs target I-line (~20 degrees)
         - Outputs hue shift to bring skin toward natural peach
 
     Node 5 (Saturation):
         - Hasler-Susstrunk colorfulness metric
-        - Target range: 35-55 for natural indoor scenes
+        - No fixed target: colourfulness is a property of the scene, so this
+          reports only whether it has left a wide plausible band
         - Outputs global saturation multiplier
 
     Node 6 (Black Level):
@@ -260,38 +261,36 @@ def analyze_frame(img_path):
         }
 
     # ── Node 5: Saturation ─────────────────────────────────────────
-    # Hasler-Susstrunk colorfulness metric
-    # Scale to 0-255 range for Hasler-Susstrunk metric (reference values are 0-255)
-    rg = ((r - g) * 255).flatten()
-    yb = ((0.5 * (r + g) - b) * 255).flatten()
-    colorfulness = (
-        math.sqrt(np.mean(rg ** 2) + np.mean(yb ** 2)) +
-        0.3 * math.sqrt(np.mean(rg) ** 2 + np.mean(yb) ** 2)
-    )
+    #
+    # Judged against the shared plausible band, not a fixed target. This node
+    # used to aim at colourfulness 45, which told a correct scene measuring
+    # 63.8 to desaturate — colourfulness is a property of the scene, so there
+    # is no number to hit. Using grade_metrics keeps the report and the solver
+    # from contradicting each other.
+    colorfulness = grade_metrics.colorfulness(arr)
+    sat_error = grade_metrics.saturation_error(arr)
+    low, high = grade_metrics.SATURATION_BAND
 
     mean_sat = np.mean(s.flatten())
-    # Target colorfulness: 35-55 for natural indoor
-    target_colorfulness = 45.0
-    sat_ratio = target_colorfulness / colorfulness if colorfulness > 0 else 1.0
 
     results['node5_saturation'] = {
         'colorfulness': round(colorfulness, 2),
-        'mean_saturation_hsl': round(mean_sat, 4),
-        'target_colorfulness': target_colorfulness,
-        'sat_ratio': round(sat_ratio, 3),
+        'mean_saturation_hsv': round(mean_sat, 4),
+        'plausible_band': [low, high],
+        'band_error': round(sat_error, 4),
         'assessment': (
-            'very desaturated' if colorfulness < 20 else
-            'slightly desaturated' if colorfulness < 35 else
-            'natural' if colorfulness < 55 else
-            'slightly oversaturated' if colorfulness < 70 else
-            'oversaturated'
+            'washed out' if sat_error < -0.25 else
+            'undersaturated' if sat_error < 0 else
+            'natural for the scene' if sat_error == 0 else
+            'oversaturated' if sat_error < 0.25 else
+            'heavily oversaturated'
         ),
         'preset_recommendation': (
-            'sat_boost' if sat_ratio > 1.08 else
-            'sat_reduce' if sat_ratio < 0.92 else
+            'sat_boost' if sat_error < 0 else
+            'sat_reduce' if sat_error > 0 else
             'none'
         ),
-        'recommended_strength': round(min(abs(sat_ratio - 1.0) * 5, 1.0), 2),
+        'recommended_strength': round(min(abs(sat_error) * 2, 1.0), 2),
     }
 
     # ── Node 6: Black Level ────────────────────────────────────────
@@ -404,8 +403,10 @@ def print_report(results):
     print(f"\n{'─' * 60}")
     print(f"  Node 5: SATURATION")
     print(f"{'─' * 60}")
-    print(f"  Colorfulness:       {n5['colorfulness']:.2f} (target: {n5['target_colorfulness']})")
-    print(f"  Sat ratio:          {n5['sat_ratio']:.3f}")
+    band = n5['plausible_band']
+    print(f"  Colorfulness:       {n5['colorfulness']:.2f} "
+          f"(plausible band: {band[0]:.0f}-{band[1]:.0f}, no fixed target)")
+    print(f"  Outside band by:    {n5['band_error']:.3f}")
     print(f"  Assessment:         {n5['assessment']}")
     print(f"  → Candidate: {n5['preset_recommendation']}")
 

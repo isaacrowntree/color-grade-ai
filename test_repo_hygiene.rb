@@ -161,7 +161,7 @@ assert "a CI workflow runs test_color_model.rb",
        all_workflow_text.include?('test_color_model.rb')
 
 %w[test_lut_apply.py test_eval.py test_sample_clip.py test_pipeline.mjs
-   test_footage_type.py test_match_grade.py].each do |suite|
+   test_footage_type.py test_match_grade.py test_analyze_region.py].each do |suite|
   assert "a CI workflow runs #{suite}", all_workflow_text.include?(suite)
 end
 

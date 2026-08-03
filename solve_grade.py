@@ -10,8 +10,13 @@ reduces the remaining error.
 It also *synthesises* corrections rather than only picking from the preset
 library. The library is deliberately gentle — cool_shift is a 4% channel shift
 at full strength — so no combination of library presets can neutralise a 22%
-tungsten cast. For white balance and exposure the solver therefore fits the
-parameters directly from the measurement and bakes a bespoke pipeline.
+tungsten cast. For white balance, exposure, saturation and black level the
+solver therefore fits the parameters directly from the measurement and bakes a
+bespoke pipeline. Skin stays on the tuned red_skin_fix preset, being a shape
+correction rather than a magnitude.
+
+Tone and saturation stages are held back unless the footage is confirmed
+display-referred — see footage_type.py.
 
 Ruby stays the single source of truth for the colour maths; this module only
 decides which steps to assemble and how strongly.

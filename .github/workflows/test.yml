@@ -52,6 +52,9 @@ jobs:
       - name: Frame analysis suite
         run: python3 test_auto_grade.py
 
+      - name: Region sampling suite
+        run: python3 test_analyze_region.py
+
       - name: LUT application suite
         run: python3 test_lut_apply.py
 

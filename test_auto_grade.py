@@ -316,6 +316,46 @@ class TestSkinDetectorIsShared(unittest.TestCase):
                 self.assertAlmostEqual(reported, shared, delta=1.0)
 
 
+class TestSaturationAgreesWithTheSolver(unittest.TestCase):
+    """The report and the solver must not disagree about saturation.
+
+    Node 5 used a fixed target of 45, which told a correct scene measuring 63.8
+    to desaturate — the exact judgement the solver was redesigned to avoid.
+    """
+
+    def analyze_scene(self, scene):
+        import eval_scenes
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, 'scene.png')
+            Image.fromarray(eval_scenes.as_uint8(scene)).save(path)
+            return auto_grade.analyze_frame(path)['node5_saturation']
+
+    def test_a_correct_scene_is_not_told_to_desaturate(self):
+        import eval_scenes
+        node = self.analyze_scene(eval_scenes.pristine())
+        self.assertEqual(node['preset_recommendation'], 'none',
+                         f"correct scene told to {node['preset_recommendation']}")
+
+    def test_a_washed_out_scene_is_told_to_boost(self):
+        import eval_scenes
+        _, washed = eval_scenes.build('washed_out')
+        self.assertEqual(self.analyze_scene(washed)['preset_recommendation'],
+                         'sat_boost')
+
+    def test_an_oversaturated_scene_is_told_to_reduce(self):
+        import eval_scenes
+        _, hot = eval_scenes.build('oversaturated')
+        self.assertEqual(self.analyze_scene(hot)['preset_recommendation'],
+                         'sat_reduce')
+
+    def test_it_reports_the_shared_band(self):
+        import eval_scenes
+        import grade_metrics
+        node = self.analyze_scene(eval_scenes.pristine())
+        self.assertEqual(tuple(node['plausible_band']),
+                         grade_metrics.SATURATION_BAND)
+
+
 class TestEmitIntegration(unittest.TestCase):
     """`--emit` must close the loop: frame in, working LUT out."""
 
