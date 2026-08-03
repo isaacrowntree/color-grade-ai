@@ -46,6 +46,9 @@ jobs:
       - name: Install ffmpeg
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
 
+      - name: Footage type suite
+        run: python3 test_footage_type.py
+
       - name: Frame analysis suite
         run: python3 test_auto_grade.py
 
@@ -54,6 +57,9 @@ jobs:
 
       - name: Closed-loop evaluation suite
         run: python3 test_eval.py
+
+      - name: Shot matching suite
+        run: python3 test_match_grade.py
 
       - name: Clip sampling suite
         run: python3 test_sample_clip.py

@@ -28,6 +28,7 @@ import sys
 
 import numpy as np
 
+import footage_type
 import grade_metrics
 from lut_apply import CubeLUT
 
@@ -197,7 +198,7 @@ def fit_skin(image):
     """Skin hue is a shape correction, so use the tuned library preset."""
     if grade_metrics.skin_hue_error(image) <= 3.0:
         return None
-    if grade_metrics.skin_confidence(image) < 0.01:
+    if grade_metrics.skin_confidence(image) < grade_metrics.MIN_SKIN_FRACTION:
         return None
 
     pipeline = load_preset_pipeline('red_skin_fix')
@@ -209,11 +210,17 @@ def fit_skin(image):
 
 
 # Conventional node order: balance, expose, skin, then black level.
+#
+# `tone` marks stages whose targets assume display-referred Rec.709. A 0.45
+# median and a 0.02 black point describe a graded image, not a log container,
+# so these are held back unless the footage is confirmed display-referred.
+# White balance and skin hue are not tone-dependent: a cast is a cast, and skin
+# should read as skin, whatever the transfer curve.
 FITTERS = [
-    ('white_balance', fit_white_balance),
-    ('exposure', fit_exposure),
-    ('skin', fit_skin),
-    ('black_level', fit_black_level),
+    ('white_balance', fit_white_balance, False),
+    ('exposure', fit_exposure, True),
+    ('skin', fit_skin, False),
+    ('black_level', fit_black_level, True),
 ]
 
 # What the unoptimised path uses, so the comparison is like for like.
@@ -225,9 +232,20 @@ HEURISTIC_SCALE = 1.0
 class GradePlan:
     """An ordered chain of fitted corrections."""
 
-    def __init__(self, chain, size=SOLVE_SIZE):
+    def __init__(self, chain, size=SOLVE_SIZE, footage=None, skipped=()):
         self.chain = chain
         self.size = size
+        self.footage = footage
+        self.skipped = list(skipped)
+
+    @property
+    def warnings(self):
+        notes = list(self.footage.warnings) if self.footage else []
+        if self.skipped:
+            notes.append(
+                'held back on this footage: ' + ', '.join(self.skipped) +
+                ' — these fit against display-referred targets')
+        return notes
 
     def __repr__(self):
         if not self.chain:
@@ -266,16 +284,51 @@ class GradePlan:
 
 # ── The solver ───────────────────────────────────────────────────────
 
-def solve(image, optimise=True, size=SOLVE_SIZE):
+def solve(image, optimise=True, size=SOLVE_SIZE, transfer='auto'):
     """Fit a correction chain to a frame.
 
     optimise=True   search the scale that actually minimises measured error
     optimise=False  apply each fit at face value, without verifying it helps
+    transfer        'auto' to detect log vs display-referred, or state it
     """
-    current = grade_metrics._as_float(image)
-    chain = []
+    arr = grade_metrics._as_float(image)
+    footage = footage_type.detect(arr, assume=transfer)
 
-    for _stage, fitter in FITTERS:
+    chain, skipped = _build_chain(arr, optimise, size, footage)
+
+    if optimise:
+        # The stage-by-stage search is greedy: it only accepts a scale that
+        # improves the score at that point, so a locally unhelpful step that
+        # would have set up a better final result gets dropped. On two of the
+        # nine evaluation cases that left it behind the un-searched fit.
+        #
+        # Rather than tune the greedy rule, keep the face-value chain as a
+        # floor and return whichever actually measures better. The solver can
+        # then never be worse than not searching at all.
+        face_value, _ = _build_chain(arr, False, size, footage)
+        if _score(arr, face_value, size) < _score(arr, chain, size) - 1e-9:
+            chain = face_value
+
+    return GradePlan(chain, size, footage=footage, skipped=skipped)
+
+
+def _score(image, chain, size):
+    out = image
+    for entry in chain:
+        out = lut_for(entry['steps'], size).apply(out)
+    return grade_metrics.total_error(out)
+
+
+def _build_chain(image, optimise, size, footage):
+    current = image
+    chain = []
+    skipped = []
+
+    for stage, fitter, needs_display in FITTERS:
+        if needs_display and not footage.tone_targets_apply:
+            skipped.append(stage)
+            continue
+
         fitted = fitter(current)
         if fitted is None:
             continue
@@ -312,12 +365,14 @@ def solve(image, optimise=True, size=SOLVE_SIZE):
                           'steps': best_steps})
             current = best_image
 
-    return GradePlan(chain, size)
+    return chain, skipped
 
 
 # ── CLI ──────────────────────────────────────────────────────────────
 
 def report(image, plan, name=''):
+    if plan.footage is not None:
+        print(f'\n  Footage: {plan.footage.describe()}')
     before = grade_metrics.measure(image)
     graded = plan.apply(image)
     after = grade_metrics.measure(graded)
@@ -330,6 +385,9 @@ def report(image, plan, name=''):
     print(f'  {"total":18s} {grade_metrics.total_error(image):>10.4f} '
           f'{grade_metrics.total_error(graded):>10.4f}')
     print(f'\n  skin detected in {before["skin_confidence"]:.1%} of the frame')
+
+    for warning in plan.warnings:
+        print(f'\n  ! {warning}')
 
     print(f'\n  Fitted chain:')
     if plan.chain:
@@ -349,12 +407,15 @@ def main(argv=None):
                         help='apply fits at face value without verifying them')
     parser.add_argument('--size', type=int, default=EMIT_SIZE,
                         help=f'emitted LUT grid size (default: {EMIT_SIZE})')
+    parser.add_argument('--transfer', default='auto',
+                        choices=footage_type.VALID_ASSUMPTIONS,
+                        help='log or display-referred; default is to detect')
     args = parser.parse_args(argv)
 
     from PIL import Image
 
     image = np.array(Image.open(args.frame).convert('RGB'))
-    plan = solve(image, optimise=not args.no_optimise)
+    plan = solve(image, optimise=not args.no_optimise, transfer=args.transfer)
     report(image, plan, os.path.basename(args.frame))
 
     if args.emit:

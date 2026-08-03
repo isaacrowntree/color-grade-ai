@@ -44,6 +44,7 @@ import sys
 import numpy as np
 from PIL import Image
 
+import footage_type
 import grade_metrics
 
 
@@ -375,7 +376,7 @@ def print_report(results):
     print(f"  Highlight clip:     {n2['highlight_clip_pct']:.1f}%")
     print(f"  Gamma correction:   {n2['gamma_recommendation']:.3f}")
     print(f"  Assessment:         {n2['assessment']}")
-    print(f"  → Preset: {n2['preset_recommendation']} @ {int(n2['recommended_strength']*100)}%")
+    print(f"  → Candidate: {n2['preset_recommendation']}")
 
     n3 = results['node3_white_balance']
     print(f"\n{'─' * 60}")
@@ -385,7 +386,7 @@ def print_report(results):
     print(f"  RGB gains:          R={g['r']:.4f}  G={g['g']:.4f}  B={g['b']:.4f}")
     print(f"  Deviation:          {n3['deviation_from_neutral']:.4f}")
     print(f"  Direction:          {n3['direction']}")
-    print(f"  → Preset: {n3['preset_recommendation']} @ {int(n3['recommended_strength']*100)}%")
+    print(f"  → Candidate: {n3['preset_recommendation']}")
 
     n4 = results['node4_skin']
     print(f"\n{'─' * 60}")
@@ -397,7 +398,7 @@ def print_report(results):
         print(f"  Hue delta:          {n4['hue_delta']:.1f}°")
         print(f"  Mean saturation:    {n4['mean_saturation']:.3f}")
     print(f"  Assessment:         {n4['assessment']}")
-    print(f"  → Preset: {n4['preset_recommendation']} @ {int(n4['recommended_strength']*100)}%")
+    print(f"  → Candidate: {n4['preset_recommendation']}")
 
     n5 = results['node5_saturation']
     print(f"\n{'─' * 60}")
@@ -406,7 +407,7 @@ def print_report(results):
     print(f"  Colorfulness:       {n5['colorfulness']:.2f} (target: {n5['target_colorfulness']})")
     print(f"  Sat ratio:          {n5['sat_ratio']:.3f}")
     print(f"  Assessment:         {n5['assessment']}")
-    print(f"  → Preset: {n5['preset_recommendation']} @ {int(n5['recommended_strength']*100)}%")
+    print(f"  → Candidate: {n5['preset_recommendation']}")
 
     n6 = results['node6_black_level']
     print(f"\n{'─' * 60}")
@@ -418,7 +419,7 @@ def print_report(results):
     print(f"  Shadow color:       R={sc['r']:.4f} G={sc['g']:.4f} B={sc['b']:.4f}")
     print(f"  Milky blacks:       {'YES' if n6['milky_blacks'] else 'no'}")
     print(f"  Assessment:         {n6['assessment']}")
-    print(f"  → Preset: {n6['preset_recommendation']} @ {int(n6['recommended_strength']*100)}%")
+    print(f"  → Candidate: {n6['preset_recommendation']}")
 
     print(f"\n{'=' * 60}")
     print(f"  RECOMMENDED NODE CHAIN")
@@ -443,9 +444,23 @@ def main(argv=None):
                         help='emitted LUT grid size (default: 33)')
     parser.add_argument('--no-json', action='store_true',
                         help='skip writing the _analysis.json sidecar')
+    parser.add_argument('--transfer', default='auto',
+                        choices=footage_type.VALID_ASSUMPTIONS,
+                        help='log or display-referred; default is to detect')
     args = parser.parse_args(argv)
 
+    image = np.array(Image.open(args.frame).convert('RGB'))
+
+    # State the transfer characteristic before anything else. Every target in
+    # this report assumes display-referred Rec.709, so if the footage is log
+    # the numbers below describe the log container, not a grade.
+    footage = footage_type.detect(image, assume=args.transfer)
+    print(f"\n  Footage: {footage.describe()}")
+    for warning in footage.warnings:
+        print(f"  ! {warning}")
+
     results = analyze_frame(args.frame)
+    results['footage'] = footage.as_dict()
     print_report(results)
 
     if not args.no_json:
@@ -459,8 +474,7 @@ def main(argv=None):
         # recommendations, fit the correction by measurement and bake it.
         import solve_grade
 
-        image = np.array(Image.open(args.frame).convert('RGB'))
-        plan = solve_grade.solve(image)
+        plan = solve_grade.solve(image, transfer=args.transfer)
         solve_grade.report(image, plan, os.path.basename(args.frame))
         plan.write_cube(args.emit, size=args.size)
         print(f"\n  Wrote {args.emit}\n")

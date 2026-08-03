@@ -160,7 +160,8 @@ assert "a CI workflow runs test_repo_hygiene.rb",
 assert "a CI workflow runs test_color_model.rb",
        all_workflow_text.include?('test_color_model.rb')
 
-%w[test_lut_apply.py test_eval.py test_sample_clip.py test_pipeline.mjs].each do |suite|
+%w[test_lut_apply.py test_eval.py test_sample_clip.py test_pipeline.mjs
+   test_footage_type.py test_match_grade.py].each do |suite|
   assert "a CI workflow runs #{suite}", all_workflow_text.include?(suite)
 end
 
@@ -178,6 +179,45 @@ if File.exist?(presets_json)
   assert "presets.json matches presets.yml", exported == source,
          "run `ruby export_presets.rb` — the export has drifted"
 end
+
+# ── Test 5d: Preview UI stays in step with presets.yml ────────────────
+
+section "Preview Coverage"
+
+# preview.html lists its node options by hand. Deriving them from presets.yml
+# would need a `node:` field on every preset, and several presets are
+# deliberately not UI options anyway. So instead: adding a preset must either
+# put it in the UI or name it here, on purpose.
+NOT_IN_PREVIEW = %w[
+  sgamut3_to_cine
+  yellow_fix
+  skin_highlight_fix
+  overexposure_fix
+  underexposure_fix
+  night_warm_fix
+  night_purple_fix
+  pink_cast_fix
+].freeze
+
+preview = File.read(File.join(ROOT, 'preview.html'))
+preview_options = preview.scan(/\{ value: '([a-z0-9_]+)'/).flatten.uniq
+
+all_presets = YAML.load_file(File.join(ROOT, 'presets.yml')).keys
+unlisted = all_presets - preview_options - NOT_IN_PREVIEW
+
+assert "every preset is either offered in preview.html or explicitly excluded",
+       unlisted.empty?,
+       "add to a node list or to NOT_IN_PREVIEW: #{unlisted.join(', ')}"
+
+stale_exclusions = NOT_IN_PREVIEW - all_presets
+assert "the preview exclusion list has no stale entries",
+       stale_exclusions.empty?,
+       "removed presets still excluded: #{stale_exclusions.join(', ')}"
+
+offered_but_missing = preview_options - all_presets - %w[none __none__]
+assert "preview.html offers no preset that presets.yml lacks",
+       offered_but_missing.empty?,
+       "unknown in the UI: #{offered_but_missing.join(', ')}"
 
 # ── Test 5b: Version and baselines ────────────────────────────────────
 

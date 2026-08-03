@@ -12,9 +12,20 @@ Built as a [Claude Code](https://claude.ai/claude-code) skill — Claude analyze
 
 Feed it a video frame. It tells you what's wrong and generates a .cube LUT to fix it.
 
+> **Log or Rec.709?** These LUTs are for display-referred Rec.709, applied
+> *after* a camera conversion LUT. The tool detects log footage, says so, and
+> holds back the corrections that would be meaningless on it. See
+> [Log vs Display-Referred](SKILL.md#log-vs-display-referred).
+
 ```bash
+# What kind of footage is this?
+python3 footage_type.py frame.png
+
 # Frame in, fitted correction LUT out
 python3 auto_grade.py frame_709.png --emit fix.cube
+
+# Match one shot to another
+python3 match_grade.py reference.png shot.png --emit match.cube
 
 # Fit against a whole clip rather than one arbitrary frame
 python3 sample_clip.py clip.mov --emit fix.cube
@@ -116,17 +127,19 @@ generator to reproduce v1 output exactly.
 
 ## Development
 
-Seven suites, no test framework to install:
+Nine suites, no test framework to install:
 
 ```bash
-ruby test_luts.rb            # preset pipelines, .cube output, golden-file regression
-ruby test_color_model.rb     # linear-light tone model, chromaticity, legacy parity
-ruby test_repo_hygiene.rb    # line endings, exec bits, manifests, CI wiring
-python3 test_auto_grade.py   # frame analysis: white balance, skin, exposure
-python3 test_lut_apply.py    # Python .cube engine, parity with the Ruby pipeline
-python3 test_eval.py         # closed-loop grading against known defects
-python3 test_sample_clip.py  # clip sampling, aggregation, scene-change detection
-node --test test_pipeline.mjs  # browser pipeline parity with every shipped LUT
+ruby test_luts.rb              # preset pipelines, .cube output, golden-file regression
+ruby test_color_model.rb       # linear-light tone model, chromaticity, legacy parity
+ruby test_repo_hygiene.rb      # line endings, exec bits, manifests, CI wiring
+python3 test_footage_type.py   # log vs display-referred detection
+python3 test_auto_grade.py     # frame analysis: white balance, skin, exposure
+python3 test_lut_apply.py      # Python .cube engine, parity with the Ruby pipeline
+python3 test_eval.py           # closed-loop grading against known defects
+python3 test_match_grade.py    # shot matching against a reference frame
+python3 test_sample_clip.py    # clip sampling, aggregation, scene-change detection
+node --test test_pipeline.mjs  # browser pipeline parity, live against Ruby
 ```
 
 `test_eval.py` is the one that makes "the grader got better" measurable: it

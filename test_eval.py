@@ -208,5 +208,111 @@ class TestSkinDetection(unittest.TestCase):
                            grade_metrics.skin_confidence(blue))
 
 
+class TestSparseSkinDoesNotDominate(unittest.TestCase):
+    """Regression from real footage.
+
+    On c1645_raw.png, 1,763 skin pixels — 0.021% of the frame — contributed 58%
+    of the total error, while the solver skips skin fitting below 1%. The score
+    was dominated by a term the optimiser was forbidden to touch, which is why
+    real-footage recovery was 23% against 79% on synthetic scenes.
+    """
+
+    @staticmethod
+    def scene_with_skin_fraction(fraction):
+        """A neutral frame with a controlled patch of very red skin."""
+        scene = np.full((200, 200, 3), 0.45)
+        pixels = int(200 * 200 * fraction)
+        if pixels:
+            side = max(1, int(np.sqrt(pixels)))
+            scene[:side, :side] = (0.60, 0.41, 0.39)  # red skin, hue ~6 deg
+        return scene
+
+    def test_a_handful_of_skin_pixels_is_ignored(self):
+        sparse = self.scene_with_skin_fraction(0.0005)
+        self.assertEqual(grade_metrics.skin_hue_error(sparse), 0.0,
+                         'skin hue reported from a negligible sample')
+
+    def test_the_reporting_and_fitting_thresholds_agree(self):
+        """One constant, so the metric can never penalise what the solver is
+        not allowed to correct."""
+        just_under = self.scene_with_skin_fraction(
+            grade_metrics.MIN_SKIN_FRACTION * 0.5)
+        self.assertEqual(grade_metrics.skin_hue_error(just_under), 0.0)
+        self.assertEqual(solve_grade.fit_skin(just_under), None)
+
+    def test_ample_skin_is_still_measured_and_fitted(self):
+        ample = self.scene_with_skin_fraction(0.25)
+        self.assertGreater(grade_metrics.skin_hue_error(ample), 3.0)
+        self.assertIsNotNone(solve_grade.fit_skin(ample))
+
+    def test_sparse_skin_cannot_dominate_the_score(self):
+        sparse = self.scene_with_skin_fraction(0.002)
+        total = grade_metrics.total_error(sparse)
+        skin_share = (grade_metrics.WEIGHTS['skin_hue'] *
+                      grade_metrics.skin_hue_error(sparse) / 30.0)
+        self.assertLess(skin_share, total * 0.25,
+                        'a sliver of skin still dominates the score')
+
+    def test_skin_contribution_scales_with_confidence(self):
+        """Between the threshold and a solid sample, influence ramps rather
+        than switching on at full weight."""
+        marginal = grade_metrics.skin_term(self.scene_with_skin_fraction(0.012))
+        ample = grade_metrics.skin_term(self.scene_with_skin_fraction(0.25))
+        self.assertLess(marginal, ample)
+
+
+class TestLogAwareSolving(unittest.TestCase):
+    """Tone targets describe a graded Rec.709 image, not a log container."""
+
+    def setUp(self):
+        self.display = eval_scenes.pristine()
+        self.log = eval_scenes.as_log(
+            eval_scenes.degrade(self.display, gains=(1.22, 1.0, 0.78)))
+
+    def test_log_footage_is_not_tone_fitted(self):
+        plan = solve_grade.solve(self.log)
+        fitted = [s['preset'] for s in plan.chain]
+        for forbidden in ('fitted_exposure_lift', 'fitted_exposure_pull',
+                          'fitted_black_crush'):
+            self.assertNotIn(forbidden, fitted,
+                             f'{forbidden} fitted against log footage')
+
+    def test_log_plan_carries_the_warning(self):
+        plan = solve_grade.solve(self.log)
+        self.assertTrue(plan.warnings)
+        self.assertIn('conversion', ' '.join(plan.warnings).lower())
+
+    def test_log_plan_records_the_footage_type(self):
+        plan = solve_grade.solve(self.log)
+        self.assertEqual(plan.footage.kind, 'log')
+
+    def test_display_footage_is_tone_fitted_normally(self):
+        _, degraded = eval_scenes.build('warm_and_dark')
+        plan = solve_grade.solve(degraded)
+        fitted = [s['preset'] for s in plan.chain]
+        self.assertTrue(any(f.startswith('fitted_exposure') for f in fitted))
+        self.assertEqual(plan.warnings, [])
+
+    def test_overriding_the_transfer_re_enables_tone_fitting(self):
+        plan = solve_grade.solve(self.log, transfer='display')
+        fitted = [s['preset'] for s in plan.chain]
+        self.assertTrue(any(f.startswith('fitted_exposure') for f in fitted),
+                        'explicit --transfer display should permit tone fitting')
+
+    def test_white_balance_is_still_fitted_on_log(self):
+        """A colour cast is a cast whatever the transfer curve."""
+        plan = solve_grade.solve(self.log)
+        self.assertTrue(any(s['preset'].startswith('fitted_') and 'shift' in s['preset']
+                            or 'white_balance' in s['preset'] for s in plan.chain),
+                        f'no white balance step in {[s["preset"] for s in plan.chain]}')
+
+    def test_ambiguous_footage_is_held_back_too(self):
+        flat = 0.25 + self.display * 0.5
+        plan = solve_grade.solve(flat)
+        fitted = [s['preset'] for s in plan.chain]
+        self.assertNotIn('fitted_black_crush', fitted)
+        self.assertTrue(plan.warnings)
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

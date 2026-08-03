@@ -20,6 +20,7 @@ import tempfile
 import numpy as np
 from PIL import Image
 
+import footage_type
 import grade_metrics
 import solve_grade
 
@@ -181,9 +182,9 @@ def representative_frame(path, count=DEFAULT_SAMPLES):
     return frames[best]
 
 
-def solve_clip(path, count=DEFAULT_SAMPLES):
+def solve_clip(path, count=DEFAULT_SAMPLES, transfer='auto'):
     """Fit one correction for the whole clip."""
-    return solve_grade.solve(representative_frame(path, count))
+    return solve_grade.solve(representative_frame(path, count), transfer=transfer)
 
 
 # ── CLI ──────────────────────────────────────────────────────────────
@@ -198,6 +199,9 @@ def main(argv=None):
                         help=f'frames to sample (default: {DEFAULT_SAMPLES})')
     parser.add_argument('--size', type=int, default=solve_grade.EMIT_SIZE,
                         help='emitted LUT grid size')
+    parser.add_argument('--transfer', default='auto',
+                        choices=footage_type.VALID_ASSUMPTIONS,
+                        help='log or display-referred; default is to detect')
     args = parser.parse_args(argv)
 
     analysis = analyze_clip(args.clip, args.frames)
@@ -215,7 +219,10 @@ def main(argv=None):
         print(f'\n  ! {warning}')
 
     frame = representative_frame(args.clip, args.frames)
-    plan = solve_grade.solve(frame)
+    plan = solve_grade.solve(frame, transfer=args.transfer)
+    print(f'\n  Footage: {plan.footage.describe()}')
+    for warning in plan.warnings:
+        print(f'  ! {warning}')
     print(f'\n  Fitted chain:')
     if plan.chain:
         for step in plan.chain:

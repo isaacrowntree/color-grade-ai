@@ -104,10 +104,23 @@ def skin_confidence(image):
     return float(skin_mask(image).mean())
 
 
+# A single threshold for "is there enough skin to act on", shared by the
+# measurement and the solver. They used to disagree — skin_hue() reported from
+# 64 pixels while the solver required 1% of the frame — so on real footage a
+# sliver of skin could contribute most of the error score while the optimiser
+# was forbidden to correct it.
+MIN_SKIN_FRACTION = 0.01
+
+# Confidence at which the skin term carries its full weight. Between the
+# threshold and here its influence ramps, so a marginal sample nudges the
+# score rather than steering it.
+FULL_SKIN_CONFIDENCE = 0.06
+
+
 def skin_hue(image):
     """Mean skin hue in degrees, or None when there is too little to measure."""
     mask = skin_mask(image)
-    if mask.sum() < 64:
+    if mask.mean() < MIN_SKIN_FRACTION:
         return None
 
     arr = _as_float(image)
@@ -218,6 +231,16 @@ def measure(image):
     }
 
 
+def skin_term(image, measured=None):
+    """The skin contribution to the score, scaled by how much skin there is."""
+    m = measured or measure(image)
+    if m['skin_hue'] == 0.0:
+        return 0.0
+    ramp = min(m['skin_confidence'] / FULL_SKIN_CONFIDENCE, 1.0)
+    # Normalise degrees onto roughly the same scale as the other terms.
+    return WEIGHTS['skin_hue'] * (m['skin_hue'] / 30.0) * ramp
+
+
 def total_error(image):
     """Single scalar the solver minimises. Lower is better; 0 is ideal."""
     m = measure(image)
@@ -225,6 +248,5 @@ def total_error(image):
         WEIGHTS['white_balance'] * m['white_balance'] +
         WEIGHTS['exposure'] * abs(m['exposure']) +
         WEIGHTS['black_level'] * m['black_level'] +
-        # Normalise degrees onto roughly the same scale as the others.
-        WEIGHTS['skin_hue'] * (m['skin_hue'] / 30.0)
+        skin_term(image, measured=m)
     )

@@ -113,6 +113,33 @@ def as_uint8(scene):
     return np.clip(scene * 255.0 + 0.5, 0, 255).astype(np.uint8)
 
 
+# ── Log encoding ─────────────────────────────────────────────────────
+#
+# Correction LUTs are meant to be applied to display-referred Rec.709, after a
+# conversion LUT. Feeding them log footage produces a confidently wrong grade,
+# so the evaluation set needs genuine log scenes to detect against.
+
+DISPLAY_GAMMA = 2.4
+
+
+def to_linear(scene):
+    """Decode display-referred Rec.709 (BT.1886) to linear light."""
+    return np.clip(scene, 0.0, 1.0) ** DISPLAY_GAMMA
+
+
+def slog3(linear):
+    """Sony S-Log3 encoding curve (SonyRAW white paper)."""
+    x = np.asarray(linear, dtype=np.float64)
+    high = (420.0 + np.log10((np.maximum(x, 0.0) + 0.01) / 0.19) * 261.5) / 1023.0
+    low = (x * (171.2102946929 - 95.0) / 0.01125000 + 95.0) / 1023.0
+    return np.clip(np.where(x >= 0.01125000, high, low), 0.0, 1.0)
+
+
+def as_log(scene):
+    """Re-encode a display-referred scene as S-Log3, as a camera would deliver."""
+    return slog3(to_linear(scene))
+
+
 # The evaluation set. Each case names the defect it introduces so a failure
 # report says what broke, not just that something did.
 CASES = {

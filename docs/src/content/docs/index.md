@@ -215,6 +215,49 @@ Professional serial node chain:
 ffmpeg -i input.mp4 -vf "lut3d='conversion.cube':interp=tetrahedral,lut3d='correction.cube':interp=tetrahedral" output.mp4
 ```
 
+## Log vs Display-Referred
+
+Every LUT and every target in this repo assumes **display-referred Rec.709**,
+applied *after* a camera conversion LUT. Handed log footage, the analyzer sees
+lifted blacks and flat contrast, calls them defects, and fits a correction for
+something that is supposed to be there. The result looks plausible and is
+wrong, which is worse than failing — so the distinction is measured and stated
+out loud on every run.
+
+```bash
+python3 footage_type.py frame.png            # just ask what it is
+python3 auto_grade.py frame.png --transfer log
+python3 solve_grade.py frame.png --transfer display --emit fix.cube
+```
+
+Detection reads the shape of the encoding, not metadata, because by the time a
+frame reaches the tool it is usually a PNG:
+
+| Signal | Log looks like |
+|---|---|
+| Black point | lifted well above zero (S-Log3 puts black near 0.09) |
+| Highlights | held back, nothing approaching 1.0 |
+| Range | compressed into a narrow band |
+| Purity | desaturated, pre-conversion |
+| Midpoint position | median sits high within the range |
+
+**Three outcomes, not two.** A heavily flattened, lifted, desaturated
+display-referred grade is genuinely indistinguishable from log by shape alone,
+so there is an explicit `ambiguous` verdict. Guessing either way is worse:
+calling it log blocks a legitimate grade, calling it display produces a
+confidently wrong one. Ambiguous asks you, which you can always answer and the
+measurements never can.
+
+The midpoint signal is what separates the two where anything can: rescaling a
+display-referred image leaves the median's relative position untouched, while a
+log transfer moves it.
+
+**What changes on log or ambiguous footage.** Exposure and black level are held
+back, because a 0.45 median and a 0.02 black point describe a graded image, not
+a log container. White balance and skin hue still run — a cast is a cast, and
+skin should read as skin, whatever the transfer curve. `--transfer` overrides
+detection entirely.
+
 ## Closed-Loop Grading
 
 Rather than reporting recommendations for you to transcribe, the tool can fit a
